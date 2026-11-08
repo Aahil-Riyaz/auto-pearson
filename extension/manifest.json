@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Auto-Pearson",
-  "version": "0.5.0",
-  "description": "Pearson homework assistant with full visible-tab screenshots and verified choice matching.",
+  "version": "0.6.0",
+  "description": "Pearson homework assistant with correct-answer modal navigation and multi-part homework progression.",
   "permissions": [
     "activeTab",
     "scripting",

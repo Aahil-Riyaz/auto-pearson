@@ -4,7 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-function harness({ iframeReadable = true, iframeNeedsInjection = false } = {}) {
+function harness({ iframeReadable = true, iframeNeedsInjection = false, modalOnTop = false } = {}) {
   let injected = !iframeNeedsInjection;
   let listener;
   const calls = [];
@@ -23,7 +23,16 @@ function harness({ iframeReadable = true, iframeNeedsInjection = false } = {}) {
           throw new Error('No receiving end');
         }
         if (message.type === 'PEARSON_START_FRAME' || message.type === 'PEARSON_STOP_FRAME') return {ok:true};
-        if (message.type === 'PEARSON_PAGE_CONTROL') return {ok: options.frameId === 0};
+        if (message.type === 'PEARSON_PAGE_CONTROL') {
+          if (modalOnTop) {
+            if (message.action === 'status') return options.frameId === 0
+              ? {ok:true,check:true,next:true,completed:true}  // Check is behind modal!
+              : {ok:true,check:true,next:false,completed:false};
+            if (message.action === 'next') return {ok:options.frameId===0,clicked:options.frameId===0};
+            return {ok:false};
+          }
+          return {ok: options.frameId === 0};
+        }
         return {ok:true};
       },
       onRemoved:{addListener:()=>{}}
@@ -84,4 +93,18 @@ test('repairs receiving-end-missing by injecting into the precise child frame', 
   assert.equal(result.selected.frameId,5);
   const iframeProbes=calls.filter(c=>c.message.type==='PEARSON_PROBE' && c.options.frameId===5);
   assert.ok(iframeProbes.length>=2,'should ping, inject, then ping again');
+});
+
+test('success modal in outer frame wins even when Check Answer remains behind it', async () => {
+  const {ask,fromFrame,calls}=harness({modalOnTop:true});
+  const started=await ask('start');
+  assert.equal(started.ok,true);
+  const state=await fromFrame({type:'PEARSON_PAGE_ACTION',action:'status'});
+  assert.equal(state.ok,true);
+  assert.equal(state.completed,true,'must aggregate status from outer frame rather than returning child frame first');
+  const result=await fromFrame({type:'PEARSON_PAGE_ACTION',action:'next'});
+  assert.equal(result.ok,true);
+  assert.equal(result.clicked,true);
+  assert.equal(result.frameId,0);
+  assert.ok(calls.some(c=>c.message.type==='PEARSON_PAGE_CONTROL' && c.message.action==='next' && c.options.frameId===0));
 });

@@ -79,6 +79,20 @@ async function notify(tabId, status, isRunning = false, count = 0) {
     await chrome.tabs.sendMessage(tabId, { type:'PEARSON_NOTIFY', status, isRunning, count, revision }, { frameId:0 });
   } catch(error) {console.debug('[Auto-Pearson] Toolbar not reachable:',shortError(error));}
 }
+// Last-resort screenshot guard: even if Pearson changes the DOM between
+// response and navigation, never upload a Well done / completion dialog as
+// though it were a new question. The content script normally advances first.
+async function visibleFeedback(tabId) {
+  const run=await restoreRun(tabId);
+  const all=run?.frameIds?.length ? run.frameIds :
+    (await chrome.webNavigation.getAllFrames({tabId}) || [])
+      .filter(f=>safePearsonUrl(f.url) || /^about:(?:blank|srcdoc)$/i.test(f.url)).map(f=>f.frameId);
+  const statuses=await Promise.all([...new Set(all)].map(async frameId=>{
+    try {return await chrome.tabs.sendMessage(tabId,{type:'PEARSON_PAGE_CONTROL',action:'status'},{frameId});}
+    catch {return null;}
+  }));
+  return statuses.some(s=>s?.completed || s?.incorrect || s?.finished);
+}
 // The user explicitly chose full visible-tab capture. This screenshot may
 // include the account header, so the popup discloses that before Start.
 const settle = ms => new Promise(r => setTimeout(r, ms));
@@ -97,6 +111,9 @@ async function captureQuestion(tabId, { preview = false } = {}) {
     const currentActive=await chrome.tabs.query({active:true,windowId:tab.windowId});
     const currentPage=await chrome.tabs.get(tabId);
     if (currentActive[0]?.id!==tabId || !isHomework(currentPage.url||'')) throw new Error('Pearson homework tab was no longer active; screenshot cancelled.');
+    if (await visibleFeedback(tabId)) {
+      throw new Error('Pearson is showing answer feedback instead of a new question. Screenshot cancelled; use Next question/Continue to advance.');
+    }
     let shot;
     try { shot = await chrome.tabs.captureVisibleTab(tab.windowId,{format:'png'}); }
     catch (e) { throw new Error(`Chrome could not capture this Pearson tab (${shortError(e)}). Click the extension icon while Pearson is active, then press Start there to grant screenshot access.`); }
@@ -149,7 +166,7 @@ async function controlTab(tabId, action) {
   const selected = scan.selected;
   try {
     await ensureFrameScripts(tabId,selected.frameId);
-    activeRuns.set(tabId, {frameId:selected.frameId, documentId:selected.documentId});
+    activeRuns.set(tabId, {frameId:selected.frameId, documentId:selected.documentId, frameIds:scan.frames.map(f=>f.frameId)});
     await chrome.storage.session.set({[runKey(tabId)]:activeRuns.get(tabId)});
     const result = await chrome.tabs.sendMessage(tabId, {type:'PEARSON_START_FRAME'}, {frameId:selected.frameId});
     if (!result?.ok) { activeRuns.delete(tabId);await chrome.storage.session.remove(runKey(tabId));return {ok:false,error:result?.error || 'Question frame rejected Start.'}; }
@@ -250,18 +267,33 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     }
     (async()=>{
       const tabId=sender.tab.id;
-      // Pearson may render Check Answer in the exercise, another embedded player,
-      // or the outer page. Find the actual enabled button, not a guessed frame.
-      const frames=await findFrames(tabId);
-      const preferred=[sender.frameId,0,...frames.found.map(f=>f.frameId)];
-      const ids=[...new Set(preferred)];
-      for(const frameId of ids){
-        try{
-          const result=await chrome.tabs.sendMessage(tabId,{type:'PEARSON_PAGE_CONTROL',action:message.action},{frameId});
-          if(result?.ok) return {...result,frameId};
-        }catch{}
+      // Question, feedback dialog and Check Answer can appear in different
+      // Pearson frames. Read status from every accessible frame instead of
+      // returning the first (often empty) frame's status.
+      // A session already scanned the page; reuse those trusted frame IDs
+      // instead of reinjecting scripts into every iframe on every poll.
+      const run=await restoreRun(tabId);
+      const accessible=run?.frameIds?.length ? run.frameIds : (await findFrames(tabId)).found.map(f=>f.frameId);
+      const ids=[...new Set([sender.frameId,0,...accessible])]
+        .filter(id=>accessible.includes(id));
+      if (message.action==='status') {
+        const statuses=await Promise.all(ids.map(async frameId=>{
+          try {return await chrome.tabs.sendMessage(tabId,{type:'PEARSON_PAGE_CONTROL',action:'status'},{frameId});}
+          catch {return null;}
+        }));
+        return {ok:true,completed:statuses.some(x=>x?.completed),incorrect:statuses.some(x=>x?.incorrect),
+          finished:statuses.some(x=>x?.finished),readyNext:statuses.some(x=>x?.readyNext),
+          next:statuses.some(x=>x?.next),check:statuses.some(x=>x?.check)};
       }
-      return {ok:false,error:`No enabled ${message.action==='check'?'Check Answer':'Next/Continue'} control was found in any accessible Pearson frame.`};
+      for (const frameId of ids) {
+        try {
+          const result=await chrome.tabs.sendMessage(tabId,{type:'PEARSON_PAGE_CONTROL',action:message.action},{frameId});
+          if (result?.ok && result.clicked) return {...result,frameId};
+          // Backward compatibility with earlier content listeners in tests.
+          if (result?.ok && result.clicked===undefined) return {...result,clicked:true,frameId};
+        } catch {}
+      }
+      return {ok:false,error:`No actionable ${message.action==='check'?'Check Answer':'post-answer Next/Continue'} button was found in permitted Pearson frames.`};
     })().then(respond).catch(e=>respond({ok:false,error:shortError(e)}));
     return true;
   }

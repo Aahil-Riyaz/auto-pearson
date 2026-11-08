@@ -25,7 +25,43 @@
   const buttonLabel = b => textOf(b) || b.value || b.getAttribute('aria-label') || b.title || '';
   const findButton = pattern => buttons().find(b => pattern.test(buttonLabel(b).trim()) && !b.disabled);
   const findCheck = () => findButton(/^(check\s*answer|final\s*check|check)$/i);
-  const findNext = () => buttons().find(b => /^(continue|next|next\s*question|next\s*part|go to next question)$/i.test(textOf(b).trim()) && !b.disabled); // Do not click a navigation-arrow icon labelled Next.
+  const findNext = () => buttons().find(b => /^(continue|next|next\s*question|next\s*part|go to next question)$/i.test(buttonLabel(b).trim()) && !b.disabled); // Do not click an icon-only navigation arrow.
+
+  // A successful Pearson submission can leave the original Check Answer button
+  // in the DOM underneath a modal. That button MUST NOT block Next question.
+  // Only treat a button as completion navigation when success feedback is near it
+  // or inside a visible dialog, never merely because it says "Next".
+  const SUCCESS = /\b(well done|good job|great job|nice work|correct answer|that's correct|that is correct|you got it|congratulations)\b/i;
+  const INCORRECT = /\b(incorrect|not correct|not quite|try again|wrong answer)\b/i;
+  const FINISHED = /\b(homework complete|assignment complete|all questions complete|you(?:'ve| have) finished|end of assignment)\b/i;
+  function completionState() {
+    const dialogs = [...document.querySelectorAll('[role="dialog"],[aria-modal="true"],dialog,[class*="modal" i],[class*="dialog" i]')]
+      .filter(e => visible(e) && !e.closest('#auto-pearson-widget'));
+    const candidates = buttons().filter(b => /^(next\s*question|next\s*part|continue|next)$/i.test(buttonLabel(b).trim()));
+    const near = button => {
+      let node = button;
+      for (let level = 0; node && level < 6; level++, node = node.parentElement) {
+        const t = textOf(node);
+        if (t.length <= 900 && SUCCESS.test(t)) return 'success';
+        if (t.length <= 900 && INCORRECT.test(t)) return 'incorrect';
+        if (t.length <= 900 && FINISHED.test(t)) return 'finished';
+      }
+      return null;
+    };
+    // Search actual dialogs first. They take priority over controls behind them.
+    for (const dialog of dialogs) {
+      const t = textOf(dialog).slice(0, 1300);
+      if (INCORRECT.test(t)) return {kind:'incorrect',next:null};
+      if (FINISHED.test(t)) return {kind:'finished',next:null};
+      if (SUCCESS.test(t)) return {kind:'success', next:candidates.find(b => dialog.contains(b)) || null};
+    }
+    for (const button of candidates) {
+      const kind = near(button);
+      if (kind) return {kind,next:kind==='success'?button:null};
+    }
+    return null;
+  }
+
   const problemControls = () => [...document.querySelectorAll('input:not([type="hidden"]):not([type="password"]):not([type="button"]):not([type="submit"]):not([type="search"]), textarea, select, [contenteditable="true"], [role="radio"], [role="checkbox"]')]
     .filter(e => (visible(e) || ((isRadio(e) || isCheckbox(e)) && hasVisibleLabel(e))) && !e.disabled && e.getAttribute('aria-disabled') !== 'true' && !e.closest('header,nav,[role="navigation"],#auto-pearson-widget'));
 
@@ -268,43 +304,107 @@
       .filter(visible).map(textOf).join(' ').slice(0, 600);
   }
 
+  // Two different questions (or subparts) can legitimately have the same
+  // wording and option labels. A transition is also proven by new, unanswered
+  // controls replacing the answered controls after Next was clicked.
+  function isFreshQuestion(previous, current) {
+    if (!current) return false;
+    if (current.signature !== previous.signature) return true;
+    const controlsReplaced = current.fields.length && current.fields[0] !== previous.fields[0];
+    const oldGone = !previous.root?.isConnected || previous.fields.some(f => !f.isConnected);
+    const previousHadAnswer = previous.fields.some(f => (isRadio(f)||isCheckbox(f)) ? fieldSelected(f) : String(f.value||'').trim() !== '');
+    const nowUnanswered = current.fields.every(f => (isRadio(f)||isCheckbox(f)) ? !fieldSelected(f) : String(f.value||'').trim() === '');
+    return Boolean((controlsReplaced || oldGone || previousHadAnswer) && nowUnanswered);
+  }
+
+  async function waitForNewQuestion(previous, generation) {
+    // The old question remains visible *behind* the feedback dialog until
+    // Pearson finishes navigation. Do not screenshot or answer it again.
+    await delay(650);
+    const deadline=Date.now()+45000;
+    while (stillRunning(generation) && Date.now()<deadline) {
+      const modal=completionState();
+      if (modal?.kind === 'finished') { stop('Homework appears complete.'); return false; }
+      if (!modal) {
+        const next=extractQuestion();
+        if (isFreshQuestion(previous,next)) return true;
+      }
+      await delay(300);
+    }
+    if (stillRunning(generation)) stop('Clicked Next, but Pearson did not load a new question or part. Continue manually.');
+    return false;
+  }
+
+  async function getRemoteProgress(action) {
+    try { return await chrome.runtime.sendMessage({type:'PEARSON_PAGE_ACTION',action}); }
+    catch { return null; }
+  }
+
+  // Used after Check Answer AND while waiting for a user to submit manually.
+  // We never ask the AI about a visible "Well done!" or feedback overlay.
+  async function afterSubmission(previous, generation, { manualReview = false } = {}) {
+    let lastRemote=0;
+    let lastNotice='';
+    const deadline=manualReview ? Infinity : Date.now()+35000;
+    while (stillRunning(generation) && Date.now()<deadline) {
+      const current=extractQuestion();
+      const modal=completionState();
+      // Pearson can reveal the next question underneath a still-open feedback
+      // overlay; don't start a screenshot while the modal remains on screen.
+      if (!modal && current && current.signature!==previous.signature) return true;
+      const feedback=feedbackText();
+      if (modal?.kind==='incorrect' || INCORRECT.test(feedback)) {
+        stop('Pearson marked this answer incorrect. Stopped without retrying.'); return false;
+      }
+      if (modal?.kind==='finished') { stop('Homework appears complete.'); return false; }
+      if (modal?.kind==='success' && !options.autoAdvance && lastNotice!=='manual-next') {
+        updateUI('Correct! Click Next question/Continue when ready.');lastNotice='manual-next';
+      }
+      if (options.autoAdvance && modal?.kind==='success' && modal.next) {
+        updateUI('Correct. Clicking Next question / next part…');
+        modal.next.click();
+        return waitForNewQuestion(previous,generation);
+      }
+      // The result dialog can be in an *outer* Pearson frame, while this script
+      // runs inside the exercise frame. Ask the background controller to inspect
+      // other permitted Pearson frames. It never touches login/session frames.
+      if (Date.now()-lastRemote>850) {
+        lastRemote=Date.now();
+        const remote=await getRemoteProgress('status');
+        if (remote?.incorrect) {stop('Pearson marked the answer incorrect.');return false;}
+        if (remote?.finished) {stop('Homework appears complete.');return false;}
+        if (remote?.completed && !options.autoAdvance && lastNotice!=='manual-next') {
+          updateUI('Correct! Click Next question/Continue when ready.');lastNotice='manual-next';
+        }
+        if (options.autoAdvance && remote?.completed) {
+          const clicked=await getRemoteProgress('next');
+          if (clicked?.ok && clicked?.clicked) {
+            updateUI('Correct. Opening the next question / subpart…');
+            return waitForNewQuestion(previous,generation);
+          }
+        }
+      }
+      // If user manually advanced without a different signature, detect a
+      // freshly cleared answer field only after a previous selection existed.
+      if (!modal && isFreshQuestion(previous,current)) return true;
+      await delay(350);
+    }
+    if (stillRunning(generation)) stop('Pearson did not show a confirmed result or next question. Continue manually.');
+    return false;
+  }
+
   async function handleSubmission(q, generation) {
     const check = findCheck();
-    const before = feedbackText();
     if (check) check.click();
     else {
-      const remote = await chrome.runtime.sendMessage({type:'PEARSON_PAGE_ACTION',action:'check'}).catch(e => ({error:e.message}));
+      const remote = await getRemoteProgress('check');
       if (!remote?.ok) {
-        updateUI('Answer filled. Check Answer is not available in the question frame or parent player; submit manually.');
-        return waitFor(() => extractQuestion()?.signature !== q.signature, generation);
+        updateUI('Answer filled. Check Answer was not found; submit manually.');
+        return afterSubmission(q,generation,{manualReview:true});
       }
     }
     updateUI('Checking answer…');
-    await delay(1000);
-    const result = await waitFor(() => {
-      const next = extractQuestion();
-      if (next && next.signature !== q.signature) return 'changed';
-      const f = feedbackText();
-      if (f && f !== before) return f;
-      const button = findNext();
-      if (button && !findCheck()) return 'next';
-      return null;
-    }, generation, 10000);
-    if (!stillRunning(generation)) return;
-    if (typeof result === 'string' && /(incorrect|not\s+correct|try\s+again|wrong)/i.test(result)) {
-      stop('Pearson marked the answer incorrect. Review manually; no retries were used.'); return;
-    }
-    if (result === 'changed') return;
-    if (options.autoAdvance) {
-      const next = findNext();
-      if (next && !findCheck()) { next.click(); return; }
-      if (!next) {
-        const remote = await chrome.runtime.sendMessage({type:'PEARSON_PAGE_ACTION',action:'next'}).catch(() => null);
-        if (remote?.ok) return;
-      }
-    }
-    updateUI('Submitted. Use Next/Continue to proceed.');
-    await waitFor(() => extractQuestion()?.signature !== q.signature, generation);
+    return afterSubmission(q,generation);
   }
 
   async function loop(generation) {
@@ -312,32 +412,44 @@
     while (stillRunning(generation)) {
       const q = await waitFor(extractQuestion, generation, 12000);
       if (!stillRunning(generation)) return;
-      if (!q) { stop('Could not identify a supported question. Use manual mode.'); return; }
-      if (last === q.signature) {
-        updateUI('Waiting for the next part or question…');
-        const next = await waitFor(() => extractQuestion()?.signature !== last, generation, 45000);
-        if (!next) { stop('The question did not change. Continue manually if needed.'); return; }
-        continue;
+      if (!q) { stop('Could not identify a supported question or subpart.'); return; }
+      // A resumed run may begin while a previous correct-answer dialog remains
+      // open. Resolve it before reading/screenshotting the question behind it.
+      const local=completionState();
+      const remote=local ? null : await getRemoteProgress('status');
+      if (local?.kind==='finished' || remote?.finished) {stop('Homework appears complete.');return;}
+      if (local?.kind==='incorrect' || remote?.incorrect) {stop('Pearson is showing incorrect feedback. Review manually.');return;}
+      if (local?.kind==='success' || remote?.completed) {
+        updateUI('Correct-answer dialog detected; advancing before taking another screenshot…');
+        const advanced=await afterSubmission(q,generation,{manualReview:true});
+        if (!advanced) return;
+        last='';continue;
       }
-      last = q.signature;
+      if (last === q.signature) {
+        updateUI('Waiting for the next question or subpart…');
+        const advanced=await afterSubmission(q,generation,{manualReview:true});
+        if (!advanced) return;
+        last='';continue;
+      }
+      last=q.signature;
       updateUI('Preparing visual AI request…');
-      const reply = await askAI(promptFor(q), generation);
+      const reply=await askAI(promptFor(q),generation);
       if (!stillRunning(generation)) return;
-      if (reply.error) { stop(reply.error); return; }
-      const answer = parseAnswer(reply.answer);
+      if (reply.error) {stop(reply.error);return;}
+      const answer=parseAnswer(reply.answer);
       if (!answer.structured || !answer.answers.length) {
         stop('AI response was not valid structured JSON with a usable answer. No option was selected.');return;
       }
-      const current = extractQuestion();
-      if (!current || current.signature !== q.signature) {
-        updateUI('Question changed while AI was answering; retrying current question.');
-        last = ''; continue;
+      const current=extractQuestion();
+      if (!current || current.signature!==q.signature || completionState()?.kind==='success') {
+        updateUI('Question changed while AI was answering; retrying the current question.');
+        last='';continue;
       }
-      if (current.type === 'multiple_choice' && /confidence\s+level|probability/i.test(current.question)) {
-        const picked = choiceIndex(answer.answers[0],current.labels);
-        const candidate = current.labels[picked] || '';
-        const percent = candidate.match(/\b(\d+(?:\.\d+)?)\s*%/);
-        if (percent && Number(percent[1]) > 100) {
+      if (current.type==='multiple_choice' && /confidence\s+level|probability/i.test(current.question)) {
+        const picked=choiceIndex(answer.answers[0],current.labels);
+        const candidate=current.labels[picked]||'';
+        const percent=candidate.match(/\b(\d+(?:\.\d+)?)\s*%/);
+        if (percent && Number(percent[1])>100) {
           stop(`Rejected impossible probability/confidence answer: ${candidate}. Please review manually.`);return;
         }
       }
@@ -347,21 +459,17 @@
           stop(`AI selected ${current.labels[returnedIndex]}, but a verified critical-value rule gives ${current.labels[current.deterministic.index]}. Stopped for review.`);return;
         }
       }
-      const outcome = await apply(current, answer.answers);
+      const outcome=await apply(current,answer.answers);
       if (!outcome.ok) {
-        stop(`Manual action needed: ${outcome.reason} AI response: ${answer.answers.join(' | ').slice(0, 250)}`); return;
+        stop(`Manual action needed: ${outcome.reason} AI response: ${answer.answers.join(' | ').slice(0,250)}`);return;
       }
       state.count++;
-      updateUI('Answer filled. ' + (options.pauseBeforeSubmit ? 'Review it and click Check Answer yourself.' : 'Submitting…'));
-      if (options.pauseBeforeSubmit) {
-        await waitFor(() => {
-          const latest = extractQuestion();
-          return latest && latest.signature !== q.signature; // wait for an actual new part; parent Check button may live in another frame
-        }, generation);
-        // Never click Check Answer when user review is enabled.
-      } else {
-        await handleSubmission(q, generation);
-      }
+      updateUI('Answer filled. '+(options.pauseBeforeSubmit?'Review it and click Check Answer yourself.':'Submitting…'));
+      const advanced=options.pauseBeforeSubmit
+        ? await afterSubmission(current,generation,{manualReview:true})
+        : await handleSubmission(current,generation);
+      if (!advanced) return;
+      last=''; // The next subpart can have identical wording and options.
     }
   }
 
@@ -429,15 +537,23 @@
     if (msg.type === 'PEARSON_CAPTURE_VISIBILITY' && window === window.top) { if (host) host.style.visibility=msg.hidden?'hidden':'visible';respond({ok:true});return; }
     if (msg.type === 'PEARSON_PAGE_CONTROL') {
       // Buttons may live in the Pearson question iframe or the parent frame.
-      const check=findCheck();const next=findNext();
-      if (msg.action === 'status') {respond({ok:true,check:!!check,next:!!next});return;}
+      const check=findCheck();const next=findNext();const completion=completionState();
+      if (msg.action === 'status') {
+        respond({ok:true,check:!!check,next:!!next,completed:completion?.kind==='success',
+          incorrect:completion?.kind==='incorrect',finished:completion?.kind==='finished',
+          readyNext:!!(next && !check)});return;
+      }
       if (msg.action === 'check') {
-        if (!check) {respond({ok:false,error:'No enabled Check Answer button.'});return;}
-        check.click();respond({ok:true});return;
+        if (!check || completion) {respond({ok:false,error:'No actionable Check Answer button.'});return;}
+        check.click();respond({ok:true,clicked:true});return;
       }
       if (msg.action === 'next') {
-        if (!next || check) {respond({ok:false,error:'A confirmed Next/Continue is not ready.'});return;}
-        next.click();respond({ok:true});return;
+        // A success dialog may cover an older, still-enabled Check Answer.
+        // Never treat an ordinary navigation button in an outer frame as a
+        // completed problem; require visible successful feedback nearby.
+        const target=completion?.kind==='success' ? completion.next : null;
+        if (!target) {respond({ok:false,error:'No confirmed post-answer Next/Continue button.'});return;}
+        target.click();respond({ok:true,clicked:true});return;
       }
     }
     if (msg.type === 'PEARSON_PROBE') {

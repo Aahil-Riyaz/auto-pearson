@@ -1,0 +1,160 @@
+TAP version 13
+# Subtest: parse JSON answer
+ok 1 - parse JSON answer
+  ---
+  duration_ms: 1.856316
+  type: 'test'
+  ...
+# Subtest: parse fenced answer
+ok 2 - parse fenced answer
+  ---
+  duration_ms: 0.284192
+  type: 'test'
+  ...
+# Subtest: parse plain text fallback
+ok 3 - parse plain text fallback
+  ---
+  duration_ms: 0.22877
+  type: 'test'
+  ...
+# Subtest: match full option text
+ok 4 - match full option text
+  ---
+  duration_ms: 0.489077
+  type: 'test'
+  ...
+# Subtest: match option letter
+ok 5 - match option letter
+  ---
+  duration_ms: 0.892986
+  type: 'test'
+  ...
+# Subtest: match one-based option number
+ok 6 - match one-based option number
+  ---
+  duration_ms: 0.159907
+  type: 'test'
+  ...
+# Subtest: refuse unknown answer
+ok 7 - refuse unknown answer
+  ---
+  duration_ms: 0.324502
+  type: 'test'
+  ...
+# Subtest: reject ambiguous unstructured response
+ok 8 - reject ambiguous unstructured response
+  ---
+  duration_ms: 0.095031
+  type: 'test'
+  ...
+# Subtest: Pearson regression: structured Gemini B. 90% matches option B, even with placeholder radio labels
+ok 9 - Pearson regression: structured Gemini B. 90% matches option B, even with placeholder radio labels
+  ---
+  duration_ms: 0.49107
+  type: 'test'
+  ...
+# Subtest: Pearson regression: Gemini B. 90% matches visible lettered percentages
+ok 10 - Pearson regression: Gemini B. 90% matches visible lettered percentages
+  ---
+  duration_ms: 0.448275
+  type: 'test'
+  ...
+# Subtest: reject a letter whose numeric value conflicts with the labelled choice
+ok 11 - reject a letter whose numeric value conflicts with the labelled choice
+  ---
+  duration_ms: 0.209281
+  type: 'test'
+  ...
+# Subtest: reject ambiguous text-only answers and invalid option letters
+ok 12 - reject ambiguous text-only answers and invalid option letters
+  ---
+  duration_ms: 0.103974
+  type: 'test'
+  ...
+# Subtest: letter with percent works when Pearson labels are noninformative generic descriptions
+ok 13 - letter with percent works when Pearson labels are noninformative generic descriptions
+  ---
+  duration_ms: 0.159758
+  type: 'test'
+  ...
+# Subtest: start selects accessible exercise iframe rather than top-level page
+ok 14 - start selects accessible exercise iframe rather than top-level page
+  ---
+  duration_ms: 5.279431
+  type: 'test'
+  ...
+# Subtest: diagnostic reports inaccessible frame instead of pretending to start
+ok 15 - diagnostic reports inaccessible frame instead of pretending to start
+  ---
+  duration_ms: 1.475672
+  type: 'test'
+  ...
+# Subtest: question frame can request Check Answer from outer Pearson player only
+ok 16 - question frame can request Check Answer from outer Pearson player only
+  ---
+  duration_ms: 2.767681
+  type: 'test'
+  ...
+# Subtest: repairs receiving-end-missing by injecting into the precise child frame
+ok 17 - repairs receiving-end-missing by injecting into the precise child frame
+  ---
+  duration_ms: 0.924533
+  type: 'test'
+  ...
+# Subtest: success modal in outer frame wins even when Check Answer remains behind it
+ok 18 - success modal in outer frame wins even when Check Answer remains behind it
+  ---
+  duration_ms: 1.635479
+  type: 'test'
+  ...
+# Subtest: recognize 90% CI critical value from rendered formula
+ok 19 - recognize 90% CI critical value from rendered formula
+  ---
+  duration_ms: 2.264263
+  type: 'test'
+  ...
+# Subtest: never mistake 165% for confidence level
+ok 20 - never mistake 165% for confidence level
+  ---
+  duration_ms: 0.246396
+  type: 'test'
+  ...
+# Subtest: no solution if missing visible math
+ok 21 - no solution if missing visible math
+  ---
+  duration_ms: 0.157084
+  type: 'test'
+  ...
+# Subtest: LaTex conversion retains critical value
+ok 22 - LaTex conversion retains critical value
+  ---
+  duration_ms: 0.425292
+  type: 'test'
+  ...
+# Subtest: MathML fraction conversion
+ok 23 - MathML fraction conversion
+  ---
+  duration_ms: 0.192696
+  type: 'test'
+  ...
+# Subtest: visual request captures Pearson, sends screenshot to Gemini, and returns to original frame
+ok 24 - visual request captures Pearson, sends screenshot to Gemini, and returns to original frame
+  ---
+  duration_ms: 910.377253
+  type: 'test'
+  ...
+# Subtest: never captures or sends a screenshot when Pearson is showing Well done feedback
+ok 25 - never captures or sends a screenshot when Pearson is showing Well done feedback
+  ---
+  duration_ms: 202.605586
+  type: 'test'
+  ...
+1..25
+# tests 25
+# suites 0
+# pass 25
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1203.196683

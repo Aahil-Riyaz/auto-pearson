@@ -1,6 +1,6 @@
 const test=require('node:test'); const assert=require('node:assert/strict');
 const fs=require('node:fs'); const vm=require('node:vm');const path=require('node:path');
-function fixture(){
+function fixture({feedbackVisible=false}={}){
  const seen=[],store=new Map(), handlers=[];
  const parentUrl='https://mylab.pearson.com/Student/PlayerHomework.aspx?homeworkId=demo';
  const chrome={
@@ -11,6 +11,7 @@ function fixture(){
    sendMessage:async(id,msg,options)=>{
     seen.push(['send',id,msg.type,options?.frameId,msg]);
     if(msg.type==='PEARSON_PROBE')return {ok:true,question:options?.frameId===5,controls:options?.frameId===5?4:0,type:'multiple_choice'};
+    if(msg.type==='PEARSON_PAGE_CONTROL' && msg.action==='status') return {ok:true,completed:feedbackVisible && options?.frameId===5};
     if(msg.type==='PEARSON_AI_PING')return {ok:true,model:'gemini'};
     if(msg.type==='PEARSON_CROP_IMAGE')throw new Error('Legacy crop must not be used');
     return {ok:true};
@@ -45,4 +46,18 @@ test('visual request captures Pearson, sends screenshot to Gemini, and returns t
  for(let i=0;i<25&&!h.seen.some(x=>x[2]==='PEARSON_REPLY');i++)await sleep(75);
  const reply=h.seen.find(x=>x[2]==='PEARSON_REPLY');assert.ok(reply);assert.equal(reply[1],1);assert.equal(reply[3],5);assert.match(reply[4].answer,/"B"/);
  assert.ok(h.seen.some(x=>x[0]==='activate'&&x[1]===2));assert.ok(h.seen.some(x=>x[0]==='activate'&&x[1]===1));
+});
+
+test('never captures or sends a screenshot when Pearson is showing Well done feedback',async()=>{
+ const h=fixture({feedbackVisible:true});
+ const started=await h.msg({type:'PEARSON_CONTROL',action:'start',tabId:1});assert.equal(started.ok,true);
+ const request=await h.msg({type:'PEARSON_REQUEST',question:'mock question',requestId:'feedback1'},
+   {tab:{id:1,url:h.parentUrl},url:'https://tdx.acs.pearson.com/question',frameId:5});
+ assert.equal(request.ok,true);
+ for(let i=0;i<30&&!h.seen.some(x=>x[2]==='PEARSON_REPLY');i++)await sleep(100);
+ const reply=h.seen.find(x=>x[2]==='PEARSON_REPLY');
+ assert.ok(reply,'Expected a reply to the question-frame controller');
+ assert.match(reply[4].error,/feedback|Next question/i);
+ assert.equal(h.seen.some(x=>x[0]==='capture'),false,'Do not capture a feedback dialog');
+ assert.equal(h.seen.some(x=>x[2]==='PEARSON_ASK'),false,'Do not send a feedback dialog to Gemini');
 });
