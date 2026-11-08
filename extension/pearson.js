@@ -11,14 +11,22 @@
   let host, statusEl, startBtn, countEl;
 
   const visible = e => !!e && e.getClientRects().length > 0 && getComputedStyle(e).visibility !== 'hidden';
+  const isRadio = e => e.type === 'radio' || e.getAttribute('role') === 'radio';
+  const isCheckbox = e => e.type === 'checkbox' || e.getAttribute('role') === 'checkbox';
+  const hasVisibleLabel = e => {
+    if (visible(e)) return true;
+    if (!e.id) return false;
+    const label = [...document.querySelectorAll('label[for]')].find(l => l.htmlFor === e.id);
+    return visible(label);
+  };
   const textOf = e => (e?.innerText || e?.textContent || '').replace(/\s+/g, ' ').trim();
   const buttons = () => [...document.querySelectorAll('button,[role="button"],input[type="button"],input[type="submit"]')].filter(visible);
   const buttonLabel = b => textOf(b) || b.value || b.getAttribute('aria-label') || b.title || '';
   const findButton = pattern => buttons().find(b => pattern.test(buttonLabel(b).trim()) && !b.disabled);
   const findCheck = () => findButton(/^(check\s*answer|final\s*check|check)$/i);
   const findNext = () => findButton(/^(continue|next|next\s*question|next\s*part|go to next question)$/i);
-  const problemControls = () => [...document.querySelectorAll('input:not([type="hidden"]):not([type="password"]):not([type="button"]):not([type="submit"]):not([type="search"]), textarea, select, [contenteditable="true"]')]
-    .filter(e => visible(e) && !e.disabled && !e.closest('header,nav,[role="navigation"],#auto-pearson-widget'));
+  const problemControls = () => [...document.querySelectorAll('input:not([type="hidden"]):not([type="password"]):not([type="button"]):not([type="submit"]):not([type="search"]), textarea, select, [contenteditable="true"], [role="radio"], [role="checkbox"]')]
+    .filter(e => (visible(e) || ((isRadio(e) || isCheckbox(e)) && hasVisibleLabel(e))) && !e.disabled && e.getAttribute('aria-disabled') !== 'true' && !e.closest('header,nav,[role="navigation"],#auto-pearson-widget'));
 
   function isAssessment() {
     const heading = [...document.querySelectorAll('h1,h2,[role="heading"]')].slice(0, 5).map(textOf).join(' ');
@@ -62,8 +70,8 @@
     const root = rootFor(controls);
     if (!root) return null;
     const fields = controls.filter(c => root.contains(c));
-    const radio = fields.filter(c => c.type === 'radio');
-    const checkboxes = fields.filter(c => c.type === 'checkbox');
+    const radio = fields.filter(isRadio);
+    const checkboxes = fields.filter(isCheckbox);
     const selects = fields.filter(c => c.tagName === 'SELECT');
     const texts = fields.filter(c => (['text', 'number', 'tel'].includes(c.type) || c.tagName === 'TEXTAREA' || c.isContentEditable));
     const type = radio.length ? 'multiple_choice' : checkboxes.length ? 'multiple_select' : selects.length ? 'matching_or_dropdown' : texts.length ? 'fill_in_the_blank' : 'unsupported';
@@ -103,7 +111,14 @@
   }
 
   function selectField(el, checked) {
-    if (el.checked === checked) return;
+    const current = (el.getAttribute('role') === 'radio' || el.getAttribute('role') === 'checkbox')
+      ? el.getAttribute('aria-checked') === 'true'
+      : el.checked;
+    if (current === checked) return;
+    if (!visible(el) && el.id) {
+      const label = [...document.querySelectorAll('label[for]')].find(l => l.htmlFor === el.id);
+      if (visible(label)) { label.click(); return; }
+    }
     el.click(); // Use native click so Pearson frameworks receive their handlers.
   }
 
@@ -261,7 +276,7 @@
     if (state.running) return stop();
     if (isAssessment()) { updateUI('Auto mode is disabled on quizzes and exams.'); return; }
     const q = extractQuestion();
-    if (!q) { updateUI('No supported problem detected in this frame. Open a homework question.'); return; }
+    if (!q) { updateUI(diagnostic()); return; }
     options = { ...DEFAULTS, ...await chrome.storage.sync.get(DEFAULTS) };
     if (!confirm(`Start Auto-Pearson using ${options.model}? Question text will be sent to that AI tab. AI answers may be wrong. ${options.pauseBeforeSubmit ? 'You will review and submit each answer.' : 'Check Answer will be clicked automatically.'}`)) return;
     state.running = true;
@@ -269,6 +284,13 @@
     const generation = state.generation;
     updateUI('Starting…');
     loop(generation).catch(error => { console.error(error); stop(`Unexpected error: ${error.message}`); });
+  }
+
+  function diagnostic() {
+    const controls = problemControls();
+    if (!controls.length) return 'Toolbar loaded, but no standard answer controls were detected. This Pearson player may use an iframe or custom math/radio widgets.';
+    if (!extractQuestion()) return `Toolbar loaded; ${controls.length} possible answer control(s) found, but the question container was not identified. Automatic answering is unavailable on this page.`;
+    return 'Ready. Review AI answers before checking.';
   }
 
   function createWidget() {
@@ -285,19 +307,24 @@
       </style><section class="card" role="region" aria-label="Auto Pearson controls"><div class="top"><div><div class="name">Auto-Pearson</div><div class="sub">Experimental MyLab helper</div></div><div class="sub" id="count">0 filled</div></div><div class="buttons"><button class="start" id="start">Start</button><button class="settings" id="settings">Settings</button></div><div class="status" id="status">Ready when your homework question is open.</div><div class="tiny">Use Stop any time. Review AI answers carefully.</div></section>`;
     (document.body || document.documentElement).appendChild(host);
     statusEl = shadow.getElementById('status');
+    statusEl.textContent = diagnostic();
     startBtn = shadow.getElementById('start');
     countEl = shadow.getElementById('count');
     startBtn.addEventListener('click', start);
     shadow.getElementById('settings').addEventListener('click', () => chrome.runtime.sendMessage({ type: 'PEARSON_OPEN_SETTINGS' }));
   }
 
-  // Pearson embeds some players in same-origin or separate frames; only a frame with a problem shows controls.
+  // Always show Start on the *top-level* Pearson homework player, even if answer
+  // fields are custom or still loading. Never silently hide the controls.
+  // Frames containing a recognizable question can also offer their own toolbar.
+  const isHomeworkPlayer = () => /(?:playerhomework|homework)/i.test(location.pathname) && window === window.top;
+  const shouldShow = () => !isAssessment() && (isHomeworkPlayer() || !!extractQuestion());
   const observer = new MutationObserver(() => {
-    if (!host && !isAssessment() && extractQuestion()) createWidget();
     if (host && !host.isConnected) host = null;
+    if (!host && shouldShow()) createWidget();
   });
   observer.observe(document.documentElement, { childList: true, subtree: true });
-  if (extractQuestion() && !isAssessment()) createWidget();
+  if (shouldShow()) createWidget();
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area === 'sync') Object.assign(options, Object.fromEntries(Object.entries(changes).map(([k, v]) => [k, v.newValue])));
   });

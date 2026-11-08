@@ -5,7 +5,7 @@
 ## What works by design
 
 - Chrome popup to choose an existing, signed-in ChatGPT, Gemini, or DeepSeek tab. No API key required.
-- A floating Start / Stop / Settings toolbar appears on eligible Pearson pages with recognizable HTML answer controls.
+- A floating Start / Stop / Settings toolbar appears on Pearson homework pages even if no answer fields are recognized, showing a diagnostic message instead of silently hiding.
 - Detects typical HTML radio buttons, checkboxes, text fields, and dropdowns.
 - Sends the current question with visible options to the selected AI tab and parses a structured reply.
 - Fills a matching answer when possible. Otherwise pauses with a manual-answer explanation.
@@ -26,7 +26,7 @@ Auto-McGraw's random SmartBook confidence and duplicate-tab double-credit featur
 2. Enable **Developer mode**.
 3. Click **Load unpacked** and select the `extension` folder **inside** this project.
 4. Click the Auto-Pearson toolbar extension icon. Choose an AI provider and open a signed-in tab for it.
-5. Open a **homework** assignment in Pearson MyLab. If a supported question is detected, a small Auto-Pearson panel should appear at the lower right.
+5. Open a **homework** assignment in Pearson MyLab. The Auto-Pearson Start panel should appear at the lower right on a top-level Pearson homework URL, even if question detection fails. A question in an embedded Pearson frame may also display its own panel.
 6. Start with **Pause before submitting ON**. Click **Start**, review the filled answer, then click Pearson's Check Answer manually.
 7. Only after testing your exact course player, turn off pause-before-submitting if allowed by your academic integrity rules. The extension may still need manual intervention.
 
@@ -48,3 +48,7 @@ To add support for a specific player, capture a **sanitized DOM snippet** of a q
 ## Credits
 
 Workflow inspired by [GooglyBlox/auto-mcgraw](https://github.com/GooglyBlox/auto-mcgraw), MIT licensed. This implementation is written separately and does not include the original project's code or assets. Pearson and its product names are trademarks of their respective owners.
+
+## v0.1.1 toolbar fix
+
+If the Start button was previously missing on `mylab.pearson.com/Student/PlayerHomework.aspx`, this version displays the floating control in the lower right without requiring successful question detection. Replacing the extension and **refreshing the Pearson homework tab** is required. If Start reports that answer controls were not detected, the current Pearson player still needs an adapter; the fix does not falsely claim it can answer unsupported widgets.
