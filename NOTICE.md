@@ -1,0 +1,1 @@
+Auto-Pearson's workflow draws on [Auto-McGraw by GooglyBlox](https://github.com/GooglyBlox/auto-mcgraw). Its [MIT license](licenses/Auto-McGraw.txt) is included with this distribution. The Auto-Pearson icon was drawn for this release.

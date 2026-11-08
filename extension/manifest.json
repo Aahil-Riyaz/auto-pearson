@@ -1,0 +1,75 @@
+{
+  "manifest_version": 3,
+  "name": "Auto-Pearson",
+  "version": "0.6.1",
+  "description": "Pearson homework assistant with expanded success-popup detection and multi-part homework progression.",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage",
+    "tabs",
+    "webNavigation"
+  ],
+  "host_permissions": [
+    "https://*.pearsoncmg.com/*",
+    "https://*.mathxl.com/*",
+    "https://*.mylabmastering.com/*",
+    "https://chatgpt.com/*",
+    "https://gemini.google.com/*",
+    "https://chat.deepseek.com/*",
+    "https://api.github.com/*",
+    "https://mylab.pearson.com/*",
+    "https://tdx.acs.pearson.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://mylab.pearson.com/*",
+        "https://tdx.acs.pearson.com/*",
+        "https://*.pearsoncmg.com/*",
+        "https://*.mathxl.com/*",
+        "https://*.mylabmastering.com/*"
+      ],
+      "js": [
+        "answer-utils.js",
+        "math.js",
+        "pearson.js"
+      ],
+      "all_frames": true,
+      "run_at": "document_idle",
+      "match_about_blank": true,
+      "match_origin_as_fallback": true
+    },
+    {
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://gemini.google.com/*",
+        "https://chat.deepseek.com/*"
+      ],
+      "js": [
+        "assistant.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "author": "Aahil Riyaz",
+  "homepage_url": "https://aahil-riyaz.github.io/auto-pearson/",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  }
+}

@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Auto-Pearson settings</title>
+<style>
+*{box-sizing:border-box}body{margin:0;width:600px;max-width:100vw;max-height:760px;overflow:auto;font:14px/1.5 system-ui,Arial,sans-serif;color:#eaf0ff;background:#0f1929}
+main{padding:19px 22px}h1{font-size:21px;margin:0}p{color:#a9bcda}h2{font-size:14px;margin:18px 0 9px;color:#c9dcfc}
+.panel{border:1px solid #314562;border-radius:12px;padding:13px;background:#192942}.row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 0;border-bottom:1px solid #2e405d}.row:last-child{border:0}label{cursor:pointer}.small{font-size:11px;color:#a9bcda}.badge{font-size:11px;color:#88cfff}
+input[type=radio],input[type=checkbox]{accent-color:#76c7ff;cursor:pointer}select,input[type=text]{background:#101d31;border:1px solid #47607f;color:white;padding:8px;border-radius:7px;width:100%}button,a.button{font:inherit;background:#2b4260;color:#eaf0ff;border:1px solid #507093;border-radius:8px;padding:6px 9px;cursor:pointer;text-decoration:none}a.button{display:inline-block}.muted{opacity:.55}.notice{margin:16px 0;font-size:12px;background:#192d40;padding:12px;border-radius:10px;border-left:3px solid #82caff}.foot{padding:14px 0;font-size:12px;color:#a9bcda}.control{width:100%;display:flex;gap:10px}.control button{flex:1;font-size:15px;font-weight:700;padding:11px}.control button.primary{background:#78c8ff;color:#10213a}.control button:disabled{opacity:.4;cursor:not-allowed}.diagnostics{white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.5 system-ui;color:#cee4fa;padding:8px 0}.tabname{font-size:12px;color:#a9bcda;margin:8px 0}
+</style>
+</head><body><main>
+<h1>Auto-Pearson <span class="small" id="version"></span></h1>
+<p>Vision-first Pearson homework assistant. Captures the complete visible homework tab and relays it to your chosen AI tab.</p>
+<h2>Current Pearson homework</h2><section class="panel"><div id="tabName" class="tabname">Finding your homework tab…</div><div class="control"><button id="start" class="primary">Start</button><button id="stop">Stop</button><button id="scan">Scan frames</button></div><div id="runStatus" class="diagnostics">Ready to scan.</div><div id="frameStatus" class="small"></div></section><h2>Vision-first screenshots</h2>
+<section class="panel"><p class="small">Every new question uses a FULL-RESOLUTION screenshot of the entire visible Pearson tab, exactly as Chrome displays it. This can include your displayed name, course header and question list. It does not include other tabs, passwords or browser address-bar contents. Preview it before sending. Use Start from this popup to grant Chrome screenshot access.</p>
+<div class="row"><div><label for="includeVisual"><strong>Send screenshot with every question</strong></label><div class="small">Recommended for formulas, graphs, and Pearson's embedded question player.</div></div><input type="checkbox" id="includeVisual"></div>
+<div class="control"><button id="capture">Preview full screenshot</button><button id="clearCapture">Clear preview</button></div>
+<div id="captureStatus" class="diagnostics">Click Preview to test the screenshot region.</div>
+<img id="capturePreview" alt="Question crop preview" style="width:100%;height:auto;display:none;border:1px solid #47607f;border-radius:8px" /></section>
+<h2>Choose your AI assistant</h2>
+<section class="panel" id="models">
+<div class="row"><label><input type="radio" name="model" value="chatgpt"> ChatGPT</label><span id="status-chatgpt" class="badge">Checking…</span><a class="button" href="https://chatgpt.com/" target="_blank">Open</a></div>
+<div class="row"><label><input type="radio" name="model" value="gemini"> Gemini</label><span id="status-gemini" class="badge">Checking…</span><a class="button" href="https://gemini.google.com/" target="_blank">Open</a></div>
+<div class="row"><label><input type="radio" name="model" value="deepseek"> DeepSeek</label><span id="status-deepseek" class="badge">Checking…</span><a class="button" href="https://chat.deepseek.com/" target="_blank">Open</a></div>
+</section><div class="control" style="margin-top:8px"><button id="testAI">Test AI connection</button></div><div id="aiStatus" class="diagnostics"></div>
+<h2>Automation controls</h2>
+<section class="panel">
+<div class="row"><div><label for="pauseBeforeSubmit"><strong>Pause before submitting</strong></label><div class="small">Fill answer, let me review and click Check Answer.</div></div><input id="pauseBeforeSubmit" type="checkbox"></div>
+<div class="row"><div><label for="autoAdvance"><strong>Advance after checking</strong></label><div class="small">Only when an unambiguous Next or Continue button appears.</div></div><input id="autoAdvance" type="checkbox"></div>
+<div class="row muted"><div><strong>Random confidence</strong><div class="small">Not available in the standard Pearson MyLab player.</div></div><input type="checkbox" disabled></div>
+<div class="row muted"><div><strong>Double-credit mode</strong><div class="small">Not a supported Pearson scoring feature.</div></div><input type="checkbox" disabled></div>
+</section>
+<div class="notice">The extension captures and sends full visible-tab screenshots to the selected AI tab only after you press Start, if vision mode is enabled. Answers may be incorrect, and some Pearson players use unsupported custom math or drag-and-drop fields. Quizzes/exams aren't targeted.</div>
+<h2>Update checker</h2><section class="panel"><label class="small" for="repo">Your GitHub repository (owner/repo), optional</label><input id="repo" type="text" placeholder="yourname/auto-pearson"><div class="row"><button id="checkUpdate">Check releases</button><span id="updateStatus" class="small">Not configured</span></div></section>
+<div class="foot">Made by Aahil Riyaz &middot; <span id="saveStatus">Settings are saved with Chrome sync.</span></div>
+<script src="popup.js"></script>
+</main></body></html>
