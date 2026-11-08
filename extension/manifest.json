@@ -1,9 +1,14 @@
 {
   "manifest_version": 3,
   "name": "Auto-Pearson (Experimental)",
-  "version": "0.1.1",
-  "description": "Experimental, opt-in AI-assisted workflow for Pearson MyLab homework questions.",
-  "permissions": ["storage", "tabs"],
+  "version": "0.2.0",
+  "description": "Frame-aware, opt-in Pearson MyLab homework helper with AI-assisted answer review.",
+  "permissions": [
+    "storage",
+    "tabs",
+    "webNavigation",
+    "scripting"
+  ],
   "host_permissions": [
     "https://*.pearson.com/*",
     "https://*.pearsoncmg.com/*",
@@ -14,8 +19,12 @@
     "https://chat.deepseek.com/*",
     "https://api.github.com/*"
   ],
-  "background": { "service_worker": "background.js" },
-  "action": { "default_popup": "popup.html" },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html"
+  },
   "content_scripts": [
     {
       "matches": [
@@ -24,13 +33,24 @@
         "https://*.mathxl.com/*",
         "https://*.mylabmastering.com/*"
       ],
-      "js": ["answer-utils.js", "pearson.js"],
+      "js": [
+        "answer-utils.js",
+        "pearson.js"
+      ],
       "all_frames": true,
-      "run_at": "document_idle"
+      "run_at": "document_idle",
+      "match_about_blank": true,
+      "match_origin_as_fallback": true
     },
     {
-      "matches": ["https://chatgpt.com/*", "https://gemini.google.com/*", "https://chat.deepseek.com/*"],
-      "js": ["assistant.js"],
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://gemini.google.com/*",
+        "https://chat.deepseek.com/*"
+      ],
+      "js": [
+        "assistant.js"
+      ],
       "run_at": "document_idle"
     }
   ]

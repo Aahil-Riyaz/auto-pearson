@@ -12,7 +12,7 @@ with sync_playwright() as playwright:
     page.set_content('<!doctype html><html><body><header>Pearson</header><h1>Homework 4</h1><p>Custom question placeholder</p></body></html>')
     page.evaluate('''() => {
       window.chrome = {
-        runtime: {onMessage:{addListener:()=>{}},sendMessage:async()=>({ok:true})},
+        runtime: {onMessage:{addListener:()=>{}},sendMessage:async(msg)=>msg.type==='PEARSON_CONTROL'?{ok:false,error:'Scanned frames; no answer controls detected.'}:{ok:true}},
         storage: {sync:{get:async d=>d},onChanged:{addListener:()=>{}}}
       };
     }''')
@@ -28,7 +28,7 @@ with sync_playwright() as playwright:
     assert toolbar.locator('#start').inner_text() == 'Start'
     assert 'no standard answer controls' in toolbar.locator('#status').inner_text().lower()
     toolbar.locator('#start').click()
-    assert 'no standard answer controls' in toolbar.locator('#status').inner_text().lower()
+    assert 'no answer controls detected' in toolbar.locator('#status').inner_text().lower()
     assert not errors, errors
     print('Regression passed: Start visible on Pearson homework URL even when question detector cannot recognize a problem.')
     browser.close()

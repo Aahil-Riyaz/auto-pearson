@@ -11,11 +11,15 @@ with sync_playwright() as playwright:
     page.set_content(html)
     page.evaluate('''() => {
       window.confirm = () => true;
-      const listeners = [];
+      const listeners = []; window.testListeners = listeners;
       window.chrome = {
          runtime: {
            onMessage: { addListener: fn => listeners.push(fn) },
            sendMessage: async msg => {
+             if(msg.type==='PEARSON_CONTROL' && msg.action==='start'){
+               setTimeout(() => listeners.forEach(fn => fn({type:'PEARSON_START_FRAME'}, {}, () => {})), 20);
+               return {ok:true,message:'Started.'};
+             }
              if(msg.type==='PEARSON_REQUEST') {
                setTimeout(() => listeners.forEach(fn => fn({type:'PEARSON_REPLY',requestId:msg.requestId,answer:'{"answers":["Paris"],"explanation":"French capital"}'})), 80);
              }

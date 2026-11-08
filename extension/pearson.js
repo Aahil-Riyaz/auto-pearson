@@ -15,16 +15,15 @@
   const isCheckbox = e => e.type === 'checkbox' || e.getAttribute('role') === 'checkbox';
   const hasVisibleLabel = e => {
     if (visible(e)) return true;
-    if (!e.id) return false;
-    const label = [...document.querySelectorAll('label[for]')].find(l => l.htmlFor === e.id);
-    return visible(label);
+    const label = e.id ? [...document.querySelectorAll('label[for]')].find(l => l.htmlFor === e.id) : e.closest('label');
+    return visible(label) || visible(e.parentElement) || visible(e.parentElement?.parentElement);
   };
   const textOf = e => (e?.innerText || e?.textContent || '').replace(/\s+/g, ' ').trim();
   const buttons = () => [...document.querySelectorAll('button,[role="button"],input[type="button"],input[type="submit"]')].filter(visible);
   const buttonLabel = b => textOf(b) || b.value || b.getAttribute('aria-label') || b.title || '';
   const findButton = pattern => buttons().find(b => pattern.test(buttonLabel(b).trim()) && !b.disabled);
   const findCheck = () => findButton(/^(check\s*answer|final\s*check|check)$/i);
-  const findNext = () => findButton(/^(continue|next|next\s*question|next\s*part|go to next question)$/i);
+  const findNext = () => buttons().find(b => /^(continue|next|next\s*question|next\s*part|go to next question)$/i.test(textOf(b).trim()) && !b.disabled); // Do not click a navigation-arrow icon labelled Next.
   const problemControls = () => [...document.querySelectorAll('input:not([type="hidden"]):not([type="password"]):not([type="button"]):not([type="submit"]):not([type="search"]), textarea, select, [contenteditable="true"], [role="radio"], [role="checkbox"]')]
     .filter(e => (visible(e) || ((isRadio(e) || isCheckbox(e)) && hasVisibleLabel(e))) && !e.disabled && e.getAttribute('aria-disabled') !== 'true' && !e.closest('header,nav,[role="navigation"],#auto-pearson-widget'));
 
@@ -52,21 +51,48 @@
       const size = textOf(node).length;
       if (size >= 60 && size <= 6000 && controls.filter(c => node.contains(c)).length >= Math.min(controls.length, 2)) return node;
     }
+    if (window !== window.top && controls.length && textOf(document.body).length >= 20 && textOf(document.body).length < 5500) return document.body;
     return null;
   }
 
   function describeInput(el, index) {
-    const id = el.id && CSS.escape(el.id);
-    const label = (el.closest('label') || (id && document.querySelector(`label[for="${id}"]`)));
+    const label = (el.closest('label') || (el.id && [...document.querySelectorAll('label[for]')].find(l => l.htmlFor === el.id)));
     const adjacent = label || el.parentElement;
     let content = textOf(adjacent).slice(0, 240);
     if (!content) content = el.getAttribute('aria-label') || el.placeholder || `Option ${index + 1}`;
     return content;
   }
 
+
+  // Conservative visual-choice fallback. Some Pearson players draw their options
+  // as clickable labels/ARIA elements and hide the underlying native input.
+  // No pixel-based blind clicking: only use clear, selectable choices in a group.
+  function extractVisualChoiceQuestion() {
+    const candidates = [...document.querySelectorAll('label, [role="radio"], [role="checkbox"], [aria-checked], [data-testid*="option" i]')]
+      .filter(e => visible(e) && !e.closest('#auto-pearson-widget, header, nav, [role="navigation"]'))
+      .filter(e => /^\s*(?:[A-H][.)]\s*)?\S.{0,190}$/s.test(textOf(e)))
+      .filter(e => e.matches('label,[role="radio"],[role="checkbox"]') || /choice|option|answer/i.test(e.getAttribute('data-testid') || ''));
+    const options = candidates.filter(e => !candidates.some(other => other !== e && e.contains(other)));
+    if (options.length < 2 || options.length > 12) return null;
+    const parent = options.reduce((node, e) => {
+      if (!node) return e;
+      while (node && !node.contains(e)) node = node.parentElement;
+      return node;
+    }, null);
+    let root = parent;
+    for (let n = 0; root && n < 5 && textOf(root).length < 40; n++) root = root.parentElement;
+    if (!root || textOf(root).length > 5000) return null;
+    const labels = options.map(textOf);
+    const question = textOf(root).slice(0, 5000);
+    if (!question || labels.some(l => !l)) return null;
+    const type = options.some(e => e.getAttribute('role') === 'checkbox') ? 'multiple_select' : 'multiple_choice';
+    const signature = normalize(question.slice(0,1200)+'|'+labels.join('|')).slice(0,1600);
+    return { root, fields: options, type, question, labels, selectOptions:[], signature };
+  }
+
   function extractQuestion() {
     const controls = problemControls();
-    if (!controls.length) return null;
+    if (!controls.length) return extractVisualChoiceQuestion();
     const root = rootFor(controls);
     if (!root) return null;
     const fields = controls.filter(c => root.contains(c));
@@ -159,6 +185,7 @@
     if (statusEl) statusEl.textContent = message;
     if (countEl) countEl.textContent = `${state.count} filled`;
     if (startBtn) startBtn.textContent = state.running ? 'Stop' : 'Start';
+    if (state.running) chrome.runtime.sendMessage({type:'PEARSON_PROGRESS', status:message, isRunning:true}).catch(()=>{});
   }
   function stop(message = 'Stopped') {
     state.running = false;
@@ -169,6 +196,7 @@
     }
     chrome.runtime.sendMessage({ type: 'PEARSON_CANCEL' }).catch(() => {});
     updateUI(message);
+    chrome.runtime.sendMessage({type:'PEARSON_PROGRESS',status:message,isRunning:false}).catch(()=>{});
   }
   const stillRunning = generation => state.running && generation === state.generation;
   async function waitFor(predicate, generation, timeout = Infinity, interval = 350) {
@@ -204,9 +232,15 @@
 
   async function handleSubmission(q, generation) {
     const check = findCheck();
-    if (!check) { updateUI('Fields filled. Check Answer not found; submit manually.'); return waitFor(() => extractQuestion()?.signature !== q.signature, generation); }
     const before = feedbackText();
-    check.click();
+    if (check) check.click();
+    else {
+      const remote = await chrome.runtime.sendMessage({type:'PEARSON_PAGE_ACTION',action:'check'}).catch(e => ({error:e.message}));
+      if (!remote?.ok) {
+        updateUI('Answer filled. Check Answer is not available in the question frame or parent player; submit manually.');
+        return waitFor(() => extractQuestion()?.signature !== q.signature, generation);
+      }
+    }
     updateUI('Checking answer…');
     await delay(1000);
     const result = await waitFor(() => {
@@ -226,6 +260,10 @@
     if (options.autoAdvance) {
       const next = findNext();
       if (next && !findCheck()) { next.click(); return; }
+      if (!next) {
+        const remote = await chrome.runtime.sendMessage({type:'PEARSON_PAGE_ACTION',action:'next'}).catch(() => null);
+        if (remote?.ok) return;
+      }
     }
     updateUI('Submitted. Use Next/Continue to proceed.');
     await waitFor(() => extractQuestion()?.signature !== q.signature, generation);
@@ -263,7 +301,7 @@
       if (options.pauseBeforeSubmit) {
         await waitFor(() => {
           const latest = extractQuestion();
-          return !findCheck() || (latest && latest.signature !== q.signature);
+          return latest && latest.signature !== q.signature; // wait for an actual new part; parent Check button may live in another frame
         }, generation);
         // Never click Check Answer when user review is enabled.
       } else {
@@ -272,18 +310,19 @@
     }
   }
 
-  async function start() {
-    if (state.running) return stop();
-    if (isAssessment()) { updateUI('Auto mode is disabled on quizzes and exams.'); return; }
+  async function start({ fromController = false } = {}) {
+    if (state.running) return {ok:false,error:'Already running'};
+    if (isAssessment()) { updateUI('Auto mode is disabled on quizzes and exams.'); return {ok:false,error:'Quizzes/exams are not supported.'}; }
     const q = extractQuestion();
-    if (!q) { updateUI(diagnostic()); return; }
+    if (!q) { updateUI(diagnostic()); return {ok:false,error:diagnostic()}; }
     options = { ...DEFAULTS, ...await chrome.storage.sync.get(DEFAULTS) };
-    if (!confirm(`Start Auto-Pearson using ${options.model}? Question text will be sent to that AI tab. AI answers may be wrong. ${options.pauseBeforeSubmit ? 'You will review and submit each answer.' : 'Check Answer will be clicked automatically.'}`)) return;
+    if (!fromController && !confirm(`Start Auto-Pearson using ${options.model}? Question text will be sent to that AI tab. AI answers may be wrong. ${options.pauseBeforeSubmit ? 'You will review and submit each answer.' : 'Check Answer will be clicked automatically.'}`)) return {ok:false,error:'Start cancelled'};
     state.running = true;
     state.generation++;
     const generation = state.generation;
     updateUI('Starting…');
     loop(generation).catch(error => { console.error(error); stop(`Unexpected error: ${error.message}`); });
+    return {ok:true};
   }
 
   function diagnostic() {
@@ -310,15 +349,55 @@
     statusEl.textContent = diagnostic();
     startBtn = shadow.getElementById('start');
     countEl = shadow.getElementById('count');
-    startBtn.addEventListener('click', start);
+    startBtn.addEventListener('click', async () => {
+      startBtn.disabled = true;
+      const action = state.running ? 'stop' : 'start';
+      try {
+        const r = await chrome.runtime.sendMessage({type:'PEARSON_CONTROL',action});
+        updateUI(r?.error || r?.message || (r?.ok ? 'Started.' : 'Could not start.'));
+      } catch (error) { updateUI(error.message); }
+      finally { startBtn.disabled = false; }
+    });
     shadow.getElementById('settings').addEventListener('click', () => chrome.runtime.sendMessage({ type: 'PEARSON_OPEN_SETTINGS' }));
   }
+
+  chrome.runtime.onMessage.addListener((msg, sender, respond) => {
+    if (msg.type === 'PEARSON_PAGE_CONTROL') {
+      if (window !== window.top) {respond({ok:false,error:'Not the parent player.'});return;}
+      const check=findCheck();const next=findNext();
+      if (msg.action === 'status') {respond({ok:true,check:!!check,next:!!next});return;}
+      if (msg.action === 'check') {
+        if (!check) {respond({ok:false,error:'No enabled Check Answer button.'});return;}
+        check.click();respond({ok:true});return;
+      }
+      if (msg.action === 'next') {
+        if (!next || check) {respond({ok:false,error:'A confirmed Next/Continue is not ready.'});return;}
+        next.click();respond({ok:true});return;
+      }
+    }
+    if (msg.type === 'PEARSON_PROBE') {
+      const q = isAssessment() ? null : extractQuestion();
+      respond({ ok: true, question:Boolean(q), type:q?.type || 'unknown', controls:q?.fields?.length || problemControls().length, origin:location.origin });
+      return;
+    }
+    if (msg.type === 'PEARSON_START_FRAME') {
+      start({fromController:true}).then(respond).catch(e => respond({ok:false,error:e.message}));
+      return true;
+    }
+    if (msg.type === 'PEARSON_STOP_FRAME') { if (state.running) stop(); respond({ok:true}); return; }
+    if (msg.type === 'PEARSON_NOTIFY' && window === window.top) {
+      if (statusEl) statusEl.textContent = msg.status || 'Ready.';
+      if (startBtn) startBtn.textContent = msg.isRunning ? 'Stop' : 'Start';
+      state.running = Boolean(msg.isRunning);
+      respond({ok:true});
+    }
+  });
 
   // Always show Start on the *top-level* Pearson homework player, even if answer
   // fields are custom or still loading. Never silently hide the controls.
   // Frames containing a recognizable question can also offer their own toolbar.
   const isHomeworkPlayer = () => /(?:playerhomework|homework)/i.test(location.pathname) && window === window.top;
-  const shouldShow = () => !isAssessment() && (isHomeworkPlayer() || !!extractQuestion());
+  const shouldShow = () => !isAssessment() && window === window.top && (isHomeworkPlayer() || !!extractQuestion());
   const observer = new MutationObserver(() => {
     if (host && !host.isConnected) host = null;
     if (!host && shouldShow()) createWidget();

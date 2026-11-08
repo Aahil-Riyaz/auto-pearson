@@ -1,4 +1,4 @@
-# Auto-Pearson (experimental)
+# Auto-Pearson (experimental, v0.2.0)
 
 **A Chrome Manifest V3 extension for Pearson MyLab homework, modeled after the workflow of [Auto-McGraw](https://github.com/GooglyBlox/auto-mcgraw).** This is a new implementation, **not an official Pearson product**, and has **not been validated on a live Pearson assignment**.
 
@@ -52,3 +52,15 @@ Workflow inspired by [GooglyBlox/auto-mcgraw](https://github.com/GooglyBlox/auto
 ## v0.1.1 toolbar fix
 
 If the Start button was previously missing on `mylab.pearson.com/Student/PlayerHomework.aspx`, this version displays the floating control in the lower right without requiring successful question detection. Replacing the extension and **refreshing the Pearson homework tab** is required. If Start reports that answer controls were not detected, the current Pearson player still needs an adapter; the fix does not falsely claim it can answer unsupported widgets.
+
+## v0.2.0: frame-aware controls and wider popup
+
+- Settings popup is 490px wide and includes **Start**, **Stop**, and **Scan frames** at the top. The Chrome action popup may scroll because Chrome caps popup height at 600px.
+- Start searches **only your open Pearson homework tab** and queries extension-permitted embedded frames to find a question. The detected frame handles AI prompting and input selection, rather than assuming the top-level page contains the exercise.
+- Scan frames attempts to re-inject the local extension scripts into frames Chrome permits on that Pearson tab, then lists frame origins, counts of controls, and detection status; it does not send question contents anywhere. Use it to identify which third-party question frame needs a dedicated adapter.
+- Handles about:blank/srcdoc frames created by permitted Pearson pages via Chrome's origin matching (when Chrome can associate the creator with Pearson). It does not ask to debug Chrome, disable protections, extract browser session data, or request <all_urls> permission.
+- **Experimental:** a custom Pearson question renderer may still require a new specific adapter. This release does not guarantee compatibility with the screenshot's particular question.
+
+### Cross-frame submission safeguards
+
+On some Pearson page layouts, the answer inputs are within a question frame while **Check Answer** belongs to the outer player. v0.2.0 includes a restricted frame-to-parent click path for that button (only when automatic submission is enabled). The default remains **Pause before submitting ON**. To avoid accidentally skipping a question, automatic Next is limited to a visible text-labelled Next/Continue control, not a header arrow with an accessible "Next" label. After manual checking, a new question or part must actually appear before the next AI request.
