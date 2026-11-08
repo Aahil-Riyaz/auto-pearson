@@ -1,0 +1,10 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const { parseAnswer, choiceIndex } = require('../extension/answer-utils.js');
+test('parse JSON answer', () => assert.deepEqual(parseAnswer('{"answers":["B","D"],"explanation":"reason"}'), { answers: ['B', 'D'], explanation: 'reason' }));
+test('parse fenced answer', () => assert.deepEqual(parseAnswer('```json\n{"answers":["42"]}\n```').answers, ['42']));
+test('parse plain text fallback', () => assert.deepEqual(parseAnswer('1. ten\n2. twenty').answers, ['ten', 'twenty']));
+test('match full option text', () => assert.equal(choiceIndex('Paris', ['London','Paris','Rome']), 1));
+test('match option letter', () => assert.equal(choiceIndex('B', ['London','Paris','Rome']), 1));
+test('match one-based option number', () => assert.equal(choiceIndex('3', ['London','Paris','Rome']), 2));
+test('refuse unknown answer', () => assert.equal(choiceIndex('Tokyo', ['London','Paris','Rome']), -1));

@@ -1,0 +1,11 @@
+<!doctype html><meta charset="utf-8"><title>Pearson fixture – local-only simulation</title>
+<h1>MyLab Homework Practice</h1>
+<main><div id="question" class="question">
+  <p>Which city is the capital of France?</p>
+  <label><input type="radio" name="answer" value="London"> London</label>
+  <label><input type="radio" name="answer" value="Paris"> Paris</label>
+  <label><input type="radio" name="answer" value="Rome"> Rome</label>
+</div><button id="check">Check Answer</button><button id="next" style="display:none">Next</button></main>
+<script>document.querySelector('#check').addEventListener('click',()=>{document.querySelector('#check').hidden=true;document.querySelector('#check').style.display='none';document.querySelector('#next').style.display='block';});</script>
+<script src="../extension/answer-utils.js"></script>
+<script src="../extension/pearson.js"></script>
