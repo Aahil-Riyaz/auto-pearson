@@ -12,10 +12,10 @@ function fixture(){
     seen.push(['send',id,msg.type,options?.frameId,msg]);
     if(msg.type==='PEARSON_PROBE')return {ok:true,question:options?.frameId===5,controls:options?.frameId===5?4:0,type:'multiple_choice'};
     if(msg.type==='PEARSON_AI_PING')return {ok:true,model:'gemini'};
-    if(msg.type==='PEARSON_CROP_IMAGE')return {ok:true,image:'data:image/jpeg;base64,'+'A'.repeat(3000),rect:{x:120,y:200,width:900,height:400}};
+    if(msg.type==='PEARSON_CROP_IMAGE')throw new Error('Legacy crop must not be used');
     return {ok:true};
    },
-   captureVisibleTab:async()=>{seen.push(['capture']);return 'data:image/png;base64,AAAA';},
+   captureVisibleTab:async()=>{seen.push(['capture']);return 'data:image/png;base64,'+'A'.repeat(4000);},
    update:async(id,opt)=>{seen.push(['activate',id]);},
    onRemoved:{addListener:()=>{}}
   },
@@ -38,7 +38,7 @@ test('visual request captures Pearson, sends screenshot to Gemini, and returns t
  const question='{ "type":"multiple_choice", "question":"confidence 1.645", "options":["A. 98%","B. 90%"] }';
  const accepted=await h.msg({type:'PEARSON_REQUEST',question,requestId:'r1'},{tab:{id:1,url:h.parentUrl},url:'https://tdx.acs.pearson.com/question',frameId:5});assert.equal(accepted.ok,true);
  for(let i=0;i<25&&!h.seen.some(x=>x[2]==='PEARSON_ASK');i++)await sleep(75);
- const ask=h.seen.find(x=>x[2]==='PEARSON_ASK');assert.ok(ask,JSON.stringify(h.seen)); assert.equal(ask[1],2); assert.ok(ask[4].screenshot.startsWith('data:image/jpeg;base64,'));
+ const ask=h.seen.find(x=>x[2]==='PEARSON_ASK');assert.ok(ask,JSON.stringify(h.seen)); assert.equal(ask[1],2); assert.ok(ask[4].screenshot.startsWith('data:image/png;base64,'));
  assert.equal(ask[4].question,question);
  assert.equal(h.seen.filter(x=>x[0]==='capture').length,1);
  const ai=await h.msg({type:'PEARSON_AI_RESULT',requestId:'r1',answer:'{"answers":["B"]}'},{tab:{id:2,url:'https://gemini.google.com/app'}});assert.equal(ai.ok,true);

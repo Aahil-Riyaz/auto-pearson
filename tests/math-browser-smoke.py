@@ -14,7 +14,7 @@ with sync_playwright() as p:
     page.on('pageerror',lambda error:errors.append(str(error)))
     page.set_content(html)
     page.evaluate('''() => { window.handlers=[];window.chrome={
-        runtime:{onMessage:{addListener:fn=>window.handlers.push(fn)},sendMessage:async msg=>{if(msg.type==='PEARSON_REQUEST')setTimeout(()=>window.handlers.forEach(fn=>fn({type:'PEARSON_REPLY',requestId:msg.requestId,answer:'{"answers":["B"],"explanation":"90%"}'})),100);return {ok:true};}},
+        runtime:{onMessage:{addListener:fn=>window.handlers.push(fn)},sendMessage:async msg=>{if(msg.type==='PEARSON_REQUEST')setTimeout(()=>window.handlers.forEach(fn=>fn({type:'PEARSON_REPLY',requestId:msg.requestId,answer:'{"answers":["B. 90%"],"explanation":"90%"}'})),100);return {ok:true};}},
         storage:{sync:{get:async d=>d},onChanged:{addListener:()=>{}}}
     };}''')
     for f in ('answer-utils.js','math.js','pearson.js'):
@@ -33,5 +33,5 @@ with sync_playwright() as p:
     page.wait_for_function("document.querySelector('input[value=B]').checked",timeout=7000)
     assert not page.locator('input[value=D]').is_checked()
     assert not errors,errors
-    print('PASS: content script reads rendered math, applies mocked Gemini 90% JSON answer, and leaves submission for review')
+    print('PASS: content script reads rendered math, applies mocked Gemini "B. 90%" JSON answer, and leaves submission for review')
     browser.close()

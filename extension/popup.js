@@ -24,7 +24,7 @@
   async function command(action) {
     const status=byId('runStatus');
     if (!pearsonTabId) {status.textContent='Open Pearson homework first.';return;}
-    status.textContent = action === 'scan' ? 'Scanning Pearson frames…' : action === 'preview' ? 'Capturing question area…' : `${action === 'stop' ? 'Stopping' : 'Starting'}…`;
+    status.textContent = action === 'scan' ? 'Scanning Pearson frames…' : action === 'preview' ? 'Capturing full visible tab…' : `${action === 'stop' ? 'Stopping' : 'Starting'}…`;
     try {
       const result=await chrome.runtime.sendMessage({type:'PEARSON_CONTROL',action,tabId:pearsonTabId});
       if (action === 'scan' && result?.ok) {
@@ -44,7 +44,7 @@
     const preview=byId('capturePreview');
     preview.style.display=source?'block':'none';
     preview.src=source||'';
-    byId('captureStatus').textContent=source?'This is the crop sent with every new question. Check that the complete formula and answer choices are visible.':'No preview captured yet. Vision mode automatically captures when you press Start.';
+    byId('captureStatus').textContent=source?'This is the FULL visible-tab screenshot sent with every new question. It may include your displayed name and navigation. Verify the formula and answer options are in view.':'No preview captured yet. Vision mode automatically captures when you press Start.';
   }
   byId('capture').addEventListener('click',()=>command('preview'));
   byId('clearCapture').addEventListener('click',async()=>{

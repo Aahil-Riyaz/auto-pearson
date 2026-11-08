@@ -7,6 +7,7 @@ const MODELS = Object.freeze({
 });
 // Limit tab control to Pearson homework windows. Never control an arbitrary tab.
 const PEARSON_HOSTS = /(?:^|\.)(?:pearson\.com|pearsoncmg\.com|mathxl\.com|mylabmastering\.com)$/i;
+const AUTH_HOSTS = /^(?:login|sso|auth|id)\.pearson\.com$/i; // Never inspect login/SSO frames.
 const activeRuns = new Map();
 const pendingVisuals = new Map();
 const runKey = tabId => `run:${tabId}`;
@@ -20,7 +21,7 @@ async function restoreRun(tabId) {
 const lastStatus = new Map();
 const revisions = new Map();
 const safePearsonUrl = url => {
-  try { const u = new URL(url); return u.protocol === 'https:' && PEARSON_HOSTS.test(u.hostname); }
+  try { const u = new URL(url); return u.protocol === 'https:' && PEARSON_HOSTS.test(u.hostname) && !AUTH_HOSTS.test(u.hostname); }
   catch { return false; }
 };
 const shortError = error => error?.message || String(error);
@@ -47,6 +48,7 @@ async function findFrames(tabId) {
   for (const frame of frames) {
     const approved = safePearsonUrl(frame.url) || /^about:(?:blank|srcdoc)$/i.test(frame.url);
     const origin = (()=>{try{return new URL(frame.url).origin;}catch{return 'embedded frame';}})();
+    if (/^https:\/\/(?:login|sso|auth|id)\.pearson\.com\//i.test(frame.url)) continue;
     if (!approved) {missing.push({frameId:frame.frameId,origin,reason:'No Pearson host access for this origin'});continue;}
     try {
       const result = await ensureFrameScripts(tabId,frame.frameId);
@@ -77,8 +79,8 @@ async function notify(tabId, status, isRunning = false, count = 0) {
     await chrome.tabs.sendMessage(tabId, { type:'PEARSON_NOTIFY', status, isRunning, count, revision }, { frameId:0 });
   } catch(error) {console.debug('[Auto-Pearson] Toolbar not reachable:',shortError(error));}
 }
-// The captured image is cropped inside the Pearson top-level content script.
-// Full-page bytes are never sent to an AI website.
+// The user explicitly chose full visible-tab capture. This screenshot may
+// include the account header, so the popup discloses that before Start.
 const settle = ms => new Promise(r => setTimeout(r, ms));
 async function captureQuestion(tabId, { preview = false } = {}) {
   const tab = await chrome.tabs.get(tabId);
@@ -92,13 +94,15 @@ async function captureQuestion(tabId, { preview = false } = {}) {
   await chrome.tabs.sendMessage(tabId,{type:'PEARSON_CAPTURE_VISIBILITY',hidden:true},{frameId:0}).catch(()=>{});
   try {
     await settle(180);
+    const currentActive=await chrome.tabs.query({active:true,windowId:tab.windowId});
+    const currentPage=await chrome.tabs.get(tabId);
+    if (currentActive[0]?.id!==tabId || !isHomework(currentPage.url||'')) throw new Error('Pearson homework tab was no longer active; screenshot cancelled.');
     let shot;
     try { shot = await chrome.tabs.captureVisibleTab(tab.windowId,{format:'png'}); }
     catch (e) { throw new Error(`Chrome could not capture this Pearson tab (${shortError(e)}). Click the extension icon while Pearson is active, then press Start there to grant screenshot access.`); }
-    const crop = await chrome.tabs.sendMessage(tabId,{type:'PEARSON_CROP_IMAGE',shot},{frameId:0});
-    if (!crop?.ok || !crop.image?.startsWith('data:image/')) throw new Error(crop?.error || 'Unable to crop the Pearson question screenshot.');
-    if (preview) await chrome.storage.session.set({[`screenshot:${tabId}`]:crop.image});
-    return {image:crop.image, crop:crop.rect};
+    if (!shot?.startsWith('data:image/png;base64,')) throw new Error('Chrome did not return a valid full-resolution screenshot.');
+    if (preview) await chrome.storage.session.set({[`screenshot:${tabId}`]:shot});
+    return {image:shot, crop:{mode:'full-viewport'}};
   } finally {
     await chrome.tabs.sendMessage(tabId,{type:'PEARSON_CAPTURE_VISIBILITY',hidden:false},{frameId:0}).catch(()=>{});
   }

@@ -50,7 +50,7 @@
   async function attachScreenshot(data,requestId){
     if(typeof data!=='string'||!/^data:image\/(jpeg|png);base64,/.test(data))throw new Error('Invalid screenshot image.');
     const blob=await (await fetch(data)).blob();
-    const file=new File([blob],'pearson-visible-question.jpg',{type:blob.type||'image/jpeg'});
+    const file=new File([blob],blob.type==='image/png'?'pearson-visible-homework.png':'pearson-visible-homework.jpg',{type:blob.type||'image/png'});
     const before=previewCount();
     const transfer=new DataTransfer();transfer.items.add(file);
     const editor=await waitUntil(()=>firstVisible(config.composer));
@@ -102,7 +102,7 @@
     if(job.screenshot) await attachScreenshot(job.screenshot,id);
     if(outdated())return;
     status(id,`Sending prompt to ${model}…`);
-    const text=job.question+(job.screenshot?'\n\nIMPORTANT: The attached image is the authoritative source for mathematical formulas and answer options. Read the actual image. If a formula is clipped or illegible, return an empty answers array; do not guess.':'');
+    const text=job.question+(job.screenshot?'\n\nIMPORTANT: The attached image is a FULL-RESOLUTION VISIBLE BROWSER SCREENSHOT, not a cropped question. Ignore the browser chrome, account header, navigation and other unrelated elements. Read the current question and its choices carefully from the center of the Pearson homework screen. If the formula is clipped, off-screen, or illegible, return an empty answers array; do not guess.':'');
     if(!writeComposer(editor,text)) throw new Error(`${model} did not accept the question text.`);
     const button=await waitUntil(()=>{const el=firstVisible(config.send);return el&&!el.disabled?el:null;},9000);
     if(!button)throw new Error(`${model} send button was not found or stayed disabled. The UI may have changed.`);

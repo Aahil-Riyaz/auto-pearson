@@ -11,11 +11,11 @@ input[type=radio],input[type=checkbox]{accent-color:#76c7ff;cursor:pointer}selec
 </style>
 </head><body><main>
 <h1>Auto-Pearson <span class="small" id="version"></span></h1>
-<p>Vision-first Pearson homework assistant. Automatically captures each visible question and relays it to your chosen AI tab.</p>
+<p>Vision-first Pearson homework assistant. Captures the complete visible homework tab and relays it to your chosen AI tab.</p>
 <h2>Current Pearson homework</h2><section class="panel"><div id="tabName" class="tabname">Finding your homework tab…</div><div class="control"><button id="start" class="primary">Start</button><button id="stop">Stop</button><button id="scan">Scan frames</button></div><div id="runStatus" class="diagnostics">Ready to scan.</div><div id="frameStatus" class="small"></div></section><h2>Vision-first screenshots</h2>
-<section class="panel"><p class="small">Every new question is captured automatically. The extension crops out the account header and question list before the image is passed to the selected AI tab. The full screenshot is never uploaded. Preview the crop to verify the formula is visible. Use Start from this popup to grant Chrome screenshot access.</p>
+<section class="panel"><p class="small">Every new question uses a FULL-RESOLUTION screenshot of the entire visible Pearson tab, exactly as Chrome displays it. This can include your displayed name, course header and question list. It does not include other tabs, passwords or browser address-bar contents. Preview it before sending. Use Start from this popup to grant Chrome screenshot access.</p>
 <div class="row"><div><label for="includeVisual"><strong>Send screenshot with every question</strong></label><div class="small">Recommended for formulas, graphs, and Pearson's embedded question player.</div></div><input type="checkbox" id="includeVisual"></div>
-<div class="control"><button id="capture">Preview question crop</button><button id="clearCapture">Clear preview</button></div>
+<div class="control"><button id="capture">Preview full screenshot</button><button id="clearCapture">Clear preview</button></div>
 <div id="captureStatus" class="diagnostics">Click Preview to test the screenshot region.</div>
 <img id="capturePreview" alt="Question crop preview" style="width:100%;height:auto;display:none;border:1px solid #47607f;border-radius:8px" /></section>
 <h2>Choose your AI assistant</h2>
@@ -31,7 +31,7 @@ input[type=radio],input[type=checkbox]{accent-color:#76c7ff;cursor:pointer}selec
 <div class="row muted"><div><strong>Random confidence</strong><div class="small">Not available in the standard Pearson MyLab player.</div></div><input type="checkbox" disabled></div>
 <div class="row muted"><div><strong>Double-credit mode</strong><div class="small">Not a supported Pearson scoring feature.</div></div><input type="checkbox" disabled></div>
 </section>
-<div class="notice">The extension captures and sends cropped question screenshots to the selected AI tab only after you press Start, if vision mode is enabled. Answers may be incorrect, and some Pearson players use unsupported custom math or drag-and-drop fields. Quizzes/exams aren't targeted.</div>
+<div class="notice">The extension captures and sends full visible-tab screenshots to the selected AI tab only after you press Start, if vision mode is enabled. Answers may be incorrect, and some Pearson players use unsupported custom math or drag-and-drop fields. Quizzes/exams aren't targeted.</div>
 <h2>Update checker</h2><section class="panel"><label class="small" for="repo">Your GitHub repository (owner/repo), optional</label><input id="repo" type="text" placeholder="yourname/auto-pearson"><div class="row"><button id="checkUpdate">Check releases</button><span id="updateStatus" class="small">Not configured</span></div></section>
 <div class="foot"><span id="saveStatus">Settings are saved with Chrome sync.</span></div>
 <script src="popup.js"></script>

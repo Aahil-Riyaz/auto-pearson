@@ -35,6 +35,7 @@ with sync_playwright() as playwright:
     page.wait_for_selector('#auto-pearson-widget')
     page.locator('#auto-pearson-widget').locator('button#start').click()
     page.wait_for_function("document.querySelector('input[value=Paris]').checked === true")
+    page.wait_for_function("document.querySelector('#auto-pearson-widget').shadowRoot.querySelector('#status').textContent.includes('Review it')")
     status = page.locator('#auto-pearson-widget').locator('#status').inner_text()
     assert 'Review it' in status, status
     assert page.locator('#check').is_visible(), 'Pause-before-submit should NOT click Check Answer'

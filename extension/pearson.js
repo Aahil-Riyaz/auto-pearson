@@ -58,15 +58,24 @@
   }
 
   function describeInput(el, index) {
-    const label = (el.closest('label') || (el.id && [...document.querySelectorAll('label[for]')].find(l => l.htmlFor === el.id)));
-    const adjacent = label || el.parentElement;
-    const temp = adjacent?.cloneNode(true);
-    if (temp) extractFromClone(temp);
-    let content = textOf(temp).slice(0, 240);
-    if (!content) content = el.getAttribute('aria-label') || el.placeholder || `Option ${index + 1}`;
-    return content;
+    // Pearson may place its label alongside a hidden radio rather than in a
+    // <label>. Prefer the shortest informative enclosing option block.
+    const linked = el.id ? [...document.querySelectorAll('label[for]')].find(l => l.htmlFor === el.id) : null;
+    const candidates = [
+      el.closest('label'), linked,
+      el.closest('[role="radio"],[role="checkbox"],li,[class*="option" i],[class*="choice" i],[class*="answer" i]'),
+      el.parentElement, el.nextElementSibling,
+      el.parentElement?.nextElementSibling,
+      el.parentElement?.parentElement
+    ].filter(Boolean);
+    for (const candidate of candidates) {
+      const copy=candidate.cloneNode(true);
+      extractFromClone(copy);
+      const content=textOf(copy).replace(/\s+/g,' ').trim();
+      if (content && content.length<=160 && !/^\d+$/.test(content)) return content;
+    }
+    return el.getAttribute('aria-label') || el.placeholder || `Option ${index + 1}`;
   }
-
 
   // Conservative visual-choice fallback. Some Pearson players draw their options
   // as clickable labels/ARIA elements and hide the underlying native input.
@@ -123,7 +132,7 @@
     const payload = {
       type: q.type,
       question: q.question,
-      options: ['multiple_choice', 'multiple_select'].includes(q.type) ? q.labels.map((label, i) => `${i + 1}. ${label}`) : [],
+      options: ['multiple_choice', 'multiple_select'].includes(q.type) ? q.labels.map((label, i) => `${String.fromCharCode(65+i)}. ${label}`) : [],
       dropdownOptions: q.selectOptions,
       fieldCount: q.fields.length,
       detectedMath: q.mathInfo?.formulas || 0,
@@ -145,36 +154,55 @@
     el.dispatchEvent(new Event('change', { bubbles: true }));
   }
 
-  function selectField(el, checked) {
-    const current = (el.getAttribute('role') === 'radio' || el.getAttribute('role') === 'checkbox')
-      ? el.getAttribute('aria-checked') === 'true'
-      : el.checked;
-    if (current === checked) return;
-    if (!visible(el) && el.id) {
-      const label = [...document.querySelectorAll('label[for]')].find(l => l.htmlFor === el.id);
-      if (visible(label)) { label.click(); return; }
+  function fieldSelected(el) {
+    if (el.getAttribute('role') === 'radio' || el.getAttribute('role') === 'checkbox')
+      return el.getAttribute('aria-checked') === 'true';
+    return Boolean(el.checked);
+  }
+  async function selectField(el, checked) {
+    if (fieldSelected(el) === checked) return true;
+    const label=el.closest('label') || (el.id && [...document.querySelectorAll('label[for]')].find(l=>l.htmlFor===el.id));
+    const targets=[visible(el)?el:null, visible(label)?label:null, visible(el.parentElement)?el.parentElement:null]
+      .filter((target,i,all)=>target && all.indexOf(target)===i);
+    // Native clicks first; some Pearson radio controls place the listener on
+    // their visible label. Never submit if we cannot verify the new state.
+    for (const target of targets) {
+      try { target.click(); } catch {}
+      await delay(160);
+      if (fieldSelected(el)===checked) return true;
     }
-    el.click(); // Use native click so Pearson frameworks receive their handlers.
+    return false;
   }
 
-  function apply(q, answers) {
+  async function apply(q, answers) {
     if (!answers.length) return { ok: false, reason: 'No reliable AI answer was returned.' };
     if (q.type === 'multiple_choice') {
       const index = choiceIndex(answers[0], q.labels);
-      if (index < 0) return { ok: false, reason: `Couldn't match "${answers[0]}" to a choice.` };
-      selectField(q.fields[index], true);
+      if (index < 0) return { ok: false, reason: `Couldn't match "${answers[0]}" to a choice. Pearson labels: ${q.labels.slice(0,8).join(' | ').slice(0,180)}` };
+      const selected = await selectField(q.fields[index], true);
+      if (!selected) return { ok:false, reason:`Matched option ${String.fromCharCode(65+index)} but Pearson did not register the click. Stopped before Check Answer.` };
+      // Some custom widgets take a moment before updating other controls.
+      await delay(120);
+      if (!fieldSelected(q.fields[index])) return {ok:false, reason:'Pearson reverted the selected option. Stopped without submitting.'};
       return { ok: true };
     }
     if (q.type === 'multiple_select') {
       const indexes = answers.map(a => choiceIndex(a, q.labels));
       if (indexes.some(i => i < 0)) return { ok: false, reason: 'Could not match every checkbox answer.' };
-      q.fields.forEach((el, i) => selectField(el, indexes.includes(i)));
+      for (let i=0;i<q.fields.length;i++) {
+        if (!await selectField(q.fields[i],indexes.includes(i))) return {ok:false,reason:`Pearson did not accept checkbox ${i+1}.`};
+      }
       return { ok: true };
     }
     if (q.type === 'fill_in_the_blank') {
       if (answers.length !== q.fields.length) return { ok: false, reason: `Expected ${q.fields.length} blanks but received ${answers.length}.` };
-      q.fields.forEach((el, i) => setField(el, answers[i]));
-      return { ok: true };
+      for (let i=0;i<q.fields.length;i++) {
+        setField(q.fields[i],answers[i]);
+        await delay(60);
+        if (q.fields[i].value!==undefined && String(q.fields[i].value).trim()!==String(answers[i]).trim())
+          return {ok:false,reason:`Pearson did not retain text in blank ${i+1}.`};
+      }
+      return {ok:true};
     }
     if (q.type === 'matching_or_dropdown') {
       if (answers.length !== q.fields.length) return { ok: false, reason: 'Dropdown answer count mismatch.' };
@@ -184,6 +212,7 @@
         const opt = [...el.options].find(o => normalize(o.textContent) === desired) || el.options[choiceIndex(answers[i], [...el.options].map(o => o.textContent))];
         if (!opt) return { ok: false, reason: `No option matches dropdown answer ${i + 1}.` };
         setField(el, opt.value);
+        if (el.value !== opt.value) return {ok:false,reason:`Pearson did not accept dropdown ${i+1}.`};
       }
       return { ok: true };
     }
@@ -318,7 +347,7 @@
           stop(`AI selected ${current.labels[returnedIndex]}, but a verified critical-value rule gives ${current.labels[current.deterministic.index]}. Stopped for review.`);return;
         }
       }
-      const outcome = apply(current, answer.answers);
+      const outcome = await apply(current, answer.answers);
       if (!outcome.ok) {
         stop(`Manual action needed: ${outcome.reason} AI response: ${answer.answers.join(' | ').slice(0, 250)}`); return;
       }
@@ -387,25 +416,16 @@
     shadow.getElementById('settings').addEventListener('click', () => chrome.runtime.sendMessage({ type: 'PEARSON_OPEN_SETTINGS' }));
   }
 
-  async function cropScreenshot(src) {
-    if (window !== window.top || typeof src !== 'string' || !src.startsWith('data:image/png;base64,')) throw new Error('Expected a Pearson-page screenshot.');
-    const img=new Image(); img.src=src;
-    await new Promise((res,rej)=>{if(img.complete && img.naturalWidth)res();else {img.onload=res;img.onerror=()=>rej(new Error('Screenshot could not be decoded'));}});
-    // CSS viewport fractions deliberately exclude the site navigation, account name and left question list.
-    const left=Math.round(innerWidth*.158),top=Math.round(innerHeight*.188);
-    const right=Math.round(innerWidth*.985),bottom=Math.round(innerHeight*.755);
-    const scaleX=img.naturalWidth/innerWidth,scaleY=img.naturalHeight/innerHeight;
-    const sx=Math.max(0,Math.round(left*scaleX)),sy=Math.max(0,Math.round(top*scaleY));
-    const sw=Math.max(1,Math.min(img.naturalWidth-sx,Math.round((right-left)*scaleX)));
-    const sh=Math.max(1,Math.min(img.naturalHeight-sy,Math.round((bottom-top)*scaleY)));
-    const targetWidth=Math.min(1950,Math.round(sw*1.35));
-    const cvs=document.createElement('canvas');cvs.width=targetWidth;cvs.height=Math.max(1,Math.round(targetWidth*sh/sw));
-    cvs.getContext('2d').drawImage(img,sx,sy,sw,sh,0,0,cvs.width,cvs.height);
-    return {image:cvs.toDataURL('image/jpeg',0.94),rect:{x:left,y:top,width:right-left,height:bottom-top,outputWidth:cvs.width,outputHeight:cvs.height}};
+  async function preserveScreenshot(src) {
+    if (window !== window.top || typeof src !== 'string' || !src.startsWith('data:image/png;base64,'))
+      throw new Error('Expected a visible Pearson-page screenshot.');
+    // Do not crop or resize: the full-resolution formula, options, charts, and
+    // scroll position must remain exactly as shown on screen.
+    return {image:src,rect:{mode:'full-viewport'}};
   }
 
   chrome.runtime.onMessage.addListener((msg, sender, respond) => {
-    if (msg.type === 'PEARSON_CROP_IMAGE' && window === window.top) { cropScreenshot(msg.shot).then(v=>respond({ok:true,...v})).catch(e=>respond({ok:false,error:e.message}));return true; }
+    if (msg.type === 'PEARSON_CROP_IMAGE' && window === window.top) { preserveScreenshot(msg.shot).then(v=>respond({ok:true,...v})).catch(e=>respond({ok:false,error:e.message}));return true; }
     if (msg.type === 'PEARSON_CAPTURE_VISIBILITY' && window === window.top) { if (host) host.style.visibility=msg.hidden?'hidden':'visible';respond({ok:true});return; }
     if (msg.type === 'PEARSON_PAGE_CONTROL') {
       // Buttons may live in the Pearson question iframe or the parent frame.
