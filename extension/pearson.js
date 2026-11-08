@@ -6,7 +6,7 @@
   const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
   const { parseAnswer, choiceIndex, normalize } = PearsonAnswer;
   const { extractFromClone, confidenceZAnswer } = PearsonMath;
-  const DEFAULTS = { model: 'chatgpt', pauseBeforeSubmit: true, autoAdvance: false, };
+  const DEFAULTS = { model: 'gemini', pauseBeforeSubmit: true, autoAdvance: true, includeVisual: true };
   const state = { running: false, generation: 0, count: 0, errors: 0, currentRequest: null, resolveRequest: null };
   let options = { ...DEFAULTS };
   let host, statusEl, startBtn, countEl;
@@ -291,26 +291,13 @@
         continue;
       }
       last = q.signature;
-      let answer;
-      if (q.deterministic && q.type === 'multiple_choice') {
-        answer = { answers: [q.labels[q.deterministic.index]], explanation: `Exact two-sided z critical value ${q.deterministic.critical} yields ${q.deterministic.level}% confidence.`, structured: true };
-        updateUI(`Verified known z critical value: ${q.deterministic.level}% confidence.`);
-      } else {
-        if (q.mathInfo?.unreadable) {
-          const visual=await chrome.runtime.sendMessage({type:'PEARSON_VISUAL_STATUS'}).catch(()=>({ok:false}));
-          if (!options.includeVisual || !visual?.available) {
-            stop(`Question contains ${q.mathInfo.unreadable} unreadable image/formula(s). Use Capture visible question in Settings, enable the attachment, and Start again.`);
-            return;
-          }
-        }
-        updateUI(`Asking ${options.model} about a ${q.type.replace(/_/g, ' ')} question…`);
-        const reply = await askAI(promptFor(q), generation);
-        if (!stillRunning(generation)) return;
-        if (reply.error) { stop(reply.error); return; }
-        answer = parseAnswer(reply.answer);
-        if (!answer.structured || !answer.answers.length) {
-          stop('AI response was not valid structured JSON with a usable answer. No option was selected.');return;
-        }
+      updateUI('Preparing visual AI request…');
+      const reply = await askAI(promptFor(q), generation);
+      if (!stillRunning(generation)) return;
+      if (reply.error) { stop(reply.error); return; }
+      const answer = parseAnswer(reply.answer);
+      if (!answer.structured || !answer.answers.length) {
+        stop('AI response was not valid structured JSON with a usable answer. No option was selected.');return;
       }
       const current = extractQuestion();
       if (!current || current.signature !== q.signature) {
@@ -323,6 +310,12 @@
         const percent = candidate.match(/\b(\d+(?:\.\d+)?)\s*%/);
         if (percent && Number(percent[1]) > 100) {
           stop(`Rejected impossible probability/confidence answer: ${candidate}. Please review manually.`);return;
+        }
+      }
+      if (current.deterministic && current.type==='multiple_choice') {
+        const returnedIndex=choiceIndex(answer.answers[0],current.labels);
+        if (returnedIndex>=0 && returnedIndex!==current.deterministic.index) {
+          stop(`AI selected ${current.labels[returnedIndex]}, but a verified critical-value rule gives ${current.labels[current.deterministic.index]}. Stopped for review.`);return;
         }
       }
       const outcome = apply(current, answer.answers);
@@ -394,9 +387,28 @@
     shadow.getElementById('settings').addEventListener('click', () => chrome.runtime.sendMessage({ type: 'PEARSON_OPEN_SETTINGS' }));
   }
 
+  async function cropScreenshot(src) {
+    if (window !== window.top || typeof src !== 'string' || !src.startsWith('data:image/png;base64,')) throw new Error('Expected a Pearson-page screenshot.');
+    const img=new Image(); img.src=src;
+    await new Promise((res,rej)=>{if(img.complete && img.naturalWidth)res();else {img.onload=res;img.onerror=()=>rej(new Error('Screenshot could not be decoded'));}});
+    // CSS viewport fractions deliberately exclude the site navigation, account name and left question list.
+    const left=Math.round(innerWidth*.158),top=Math.round(innerHeight*.188);
+    const right=Math.round(innerWidth*.985),bottom=Math.round(innerHeight*.755);
+    const scaleX=img.naturalWidth/innerWidth,scaleY=img.naturalHeight/innerHeight;
+    const sx=Math.max(0,Math.round(left*scaleX)),sy=Math.max(0,Math.round(top*scaleY));
+    const sw=Math.max(1,Math.min(img.naturalWidth-sx,Math.round((right-left)*scaleX)));
+    const sh=Math.max(1,Math.min(img.naturalHeight-sy,Math.round((bottom-top)*scaleY)));
+    const targetWidth=Math.min(1950,Math.round(sw*1.35));
+    const cvs=document.createElement('canvas');cvs.width=targetWidth;cvs.height=Math.max(1,Math.round(targetWidth*sh/sw));
+    cvs.getContext('2d').drawImage(img,sx,sy,sw,sh,0,0,cvs.width,cvs.height);
+    return {image:cvs.toDataURL('image/jpeg',0.94),rect:{x:left,y:top,width:right-left,height:bottom-top,outputWidth:cvs.width,outputHeight:cvs.height}};
+  }
+
   chrome.runtime.onMessage.addListener((msg, sender, respond) => {
+    if (msg.type === 'PEARSON_CROP_IMAGE' && window === window.top) { cropScreenshot(msg.shot).then(v=>respond({ok:true,...v})).catch(e=>respond({ok:false,error:e.message}));return true; }
+    if (msg.type === 'PEARSON_CAPTURE_VISIBILITY' && window === window.top) { if (host) host.style.visibility=msg.hidden?'hidden':'visible';respond({ok:true});return; }
     if (msg.type === 'PEARSON_PAGE_CONTROL') {
-      if (window !== window.top) {respond({ok:false,error:'Not the parent player.'});return;}
+      // Buttons may live in the Pearson question iframe or the parent frame.
       const check=findCheck();const next=findNext();
       if (msg.action === 'status') {respond({ok:true,check:!!check,next:!!next});return;}
       if (msg.action === 'check') {

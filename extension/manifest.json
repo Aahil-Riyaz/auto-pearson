@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Auto-Pearson",
-  "version": "0.3.0",
-  "description": "Frame-aware Pearson MyLab helper with visible question diagnostics, math validation, and optional screenshot context.",
+  "version": "0.4.0",
+  "description": "Vision-first Pearson homework assistant: screenshots each visible question and relays to selected AI tab.",
   "permissions": [
     "activeTab",
     "scripting",
@@ -11,14 +11,15 @@
     "webNavigation"
   ],
   "host_permissions": [
-    "https://*.pearson.com/*",
     "https://*.pearsoncmg.com/*",
     "https://*.mathxl.com/*",
     "https://*.mylabmastering.com/*",
     "https://chatgpt.com/*",
     "https://gemini.google.com/*",
     "https://chat.deepseek.com/*",
-    "https://api.github.com/*"
+    "https://api.github.com/*",
+    "https://mylab.pearson.com/*",
+    "https://tdx.acs.pearson.com/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -29,7 +30,8 @@
   "content_scripts": [
     {
       "matches": [
-        "https://*.pearson.com/*",
+        "https://mylab.pearson.com/*",
+        "https://tdx.acs.pearson.com/*",
         "https://*.pearsoncmg.com/*",
         "https://*.mathxl.com/*",
         "https://*.mylabmastering.com/*"

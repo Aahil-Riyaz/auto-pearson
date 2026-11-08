@@ -1,6 +1,6 @@
 (() => {
   'use strict';
-  const DEFAULTS = { model: 'chatgpt', pauseBeforeSubmit: true, autoAdvance: false, includeVisual: false, repo: '' };
+  const DEFAULTS = { model: 'gemini', pauseBeforeSubmit: true, autoAdvance: true, includeVisual: true, repo: '' };
   const models = { chatgpt: 'https://chatgpt.com/*', gemini: 'https://gemini.google.com/*', deepseek: 'https://chat.deepseek.com/*' };
   const byId = id => document.getElementById(id);
   let saveTimeout;
@@ -24,7 +24,7 @@
   async function command(action) {
     const status=byId('runStatus');
     if (!pearsonTabId) {status.textContent='Open Pearson homework first.';return;}
-    status.textContent = action === 'scan' ? 'Scanning Pearson frames…' : `${action === 'stop' ? 'Stopping' : 'Starting'}…`;
+    status.textContent = action === 'scan' ? 'Scanning Pearson frames…' : action === 'preview' ? 'Capturing question area…' : `${action === 'stop' ? 'Stopping' : 'Starting'}…`;
     try {
       const result=await chrome.runtime.sendMessage({type:'PEARSON_CONTROL',action,tabId:pearsonTabId});
       if (action === 'scan' && result?.ok) {
@@ -33,7 +33,7 @@
         const missing = result.missing.map(f=> `Unreachable frame ${f.frameId}: ${f.origin} · ${f.reason||'Blocked'}`);
         byId('frameStatus').textContent=[...frames,...missing].slice(0,12).join('\n');
         byId('frameStatus').style.whiteSpace='pre-wrap';
-      } else status.textContent=result?.error || result?.message || 'No response from extension.';
+      } else { status.textContent=result?.error || result?.message || 'No response from extension.'; if(action === 'preview' && result?.ok) await refreshCapture(); }
     } catch(error) { status.textContent=`Extension error: ${error.message}`; }
   }
 
@@ -44,36 +44,18 @@
     const preview=byId('capturePreview');
     preview.style.display=source?'block':'none';
     preview.src=source||'';
-    byId('captureStatus').textContent=source?'Question crop ready. Enable the checkbox to send it with the next AI question.':'No screenshot captured.';
+    byId('captureStatus').textContent=source?'This is the crop sent with every new question. Check that the complete formula and answer choices are visible.':'No preview captured yet. Vision mode automatically captures when you press Start.';
   }
-  byId('capture').addEventListener('click',async()=>{
-    const status=byId('captureStatus');
-    try {
-      if (!pearsonTabId) throw new Error('Open a Pearson homework tab first.');
-      const tab=await chrome.tabs.get(pearsonTabId);
-      const active=await chrome.tabs.query({active:true,windowId:tab.windowId});
-      if (active[0]?.id!==pearsonTabId) throw new Error('Select the Pearson tab before capturing.');
-      const url=tab.url||'';
-      if (!isHomeworkTab(tab)) throw new Error('Captures are limited to Pearson homework tabs.');
-      status.textContent='Capturing visible question area…';
-      const data=await chrome.tabs.captureVisibleTab(tab.windowId,{format:'png'});
-      const image=await new Promise((resolve,reject)=>{ const obj=new Image();obj.onload=()=>resolve(obj);obj.onerror=reject;obj.src=data; });
-      const x=Math.round(image.width*.155),y=Math.round(image.height*.185);
-      const w=Math.round(image.width*.83),h=Math.round(image.height*.76);
-      const scale=Math.min(1,1300/w);
-      const canvas=document.createElement('canvas');canvas.width=Math.max(1,Math.round(w*scale));canvas.height=Math.max(1,Math.round(h*scale));
-      canvas.getContext('2d').drawImage(image,x,y,w,h,0,0,canvas.width,canvas.height);
-      const crop=canvas.toDataURL('image/jpeg',.85);
-      await chrome.storage.session.set({[`screenshot:${pearsonTabId}`]:crop});
-      await chrome.storage.sync.set({includeVisual:true});
-      byId('includeVisual').checked=true;
-      await refreshCapture();
-    } catch(error) {status.textContent=`Capture failed: ${error.message}`;}
-  });
+  byId('capture').addEventListener('click',()=>command('preview'));
   byId('clearCapture').addEventListener('click',async()=>{
     if (pearsonTabId) await chrome.storage.session.remove(`screenshot:${pearsonTabId}`);
-    await chrome.storage.sync.set({includeVisual:false});byId('includeVisual').checked=false;
     await refreshCapture();
+  });
+  byId('testAI').addEventListener('click', async()=>{
+    try {
+      const result=await chrome.runtime.sendMessage({type:'PEARSON_TEST_AI'});
+      byId('aiStatus').textContent=result?.error||result?.message||'No connection response.';
+    } catch(error){byId('aiStatus').textContent=error.message;}
   });
 
   for (const action of ['start','stop','scan']) byId(action).addEventListener('click',()=>command(action));

@@ -8,9 +8,10 @@ function harness({ iframeReadable = true, iframeNeedsInjection = false } = {}) {
   let injected = !iframeNeedsInjection;
   let listener;
   const calls = [];
+  const sessionStore=new Map();
   const url = 'https://mylab.pearson.com/Student/PlayerHomework.aspx';
   const chrome = {
-    storage:{sync:{get:async () => ({model:'gemini'})}},
+    storage:{sync:{get:async () => ({model:'gemini'})},session:{get:async k=>({[k]:sessionStore.get(k)}),set:async o=>{for(const [k,v] of Object.entries(o))sessionStore.set(k,v);},remove:async k=>{sessionStore.delete(k);}}},
     tabs:{
       get:async id => ({ id,url }),
       query:async () => [],
@@ -22,6 +23,7 @@ function harness({ iframeReadable = true, iframeNeedsInjection = false } = {}) {
           throw new Error('No receiving end');
         }
         if (message.type === 'PEARSON_START_FRAME' || message.type === 'PEARSON_STOP_FRAME') return {ok:true};
+        if (message.type === 'PEARSON_PAGE_CONTROL') return {ok: options.frameId === 0};
         return {ok:true};
       },
       onRemoved:{addListener:()=>{}}
@@ -68,7 +70,7 @@ test('question frame can request Check Answer from outer Pearson player only', a
   const {fromFrame,calls} = harness();
   const result = await fromFrame({type:'PEARSON_PAGE_ACTION',action:'check'});
   assert.equal(result.ok,true);
-  const action = calls.find(c=>c.message.type==='PEARSON_PAGE_CONTROL');
+  const action = calls.find(c=>c.message.type==='PEARSON_PAGE_CONTROL' && c.options.frameId===0);
   assert.equal(action.options.frameId,0);
   assert.equal(action.message.action,'check');
   const invalid = await fromFrame({type:'PEARSON_PAGE_ACTION',action:'delete'});

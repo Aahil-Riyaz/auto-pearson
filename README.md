@@ -1,56 +1,82 @@
-# Auto-Pearson v0.3.0 — experimental Chrome extension
+# Auto-Pearson v0.4.0 (Vision-first, experimental)
 
-A Chrome Manifest V3 helper for supported **Pearson MyLab homework** screens, based on the workflow of Auto-McGraw. This is an independent prototype and not affiliated with Pearson.
+A Chrome Manifest V3 extension for **Pearson MyLab homework**. This version replaces the old manual screenshot gate with a **new cropped screenshot for each recognized question**, relayed to a selected already-open AI chat tab. It then parses the response and attempts to fill Pearson's fields. It is based on the workflow concept of [auto-mcgraw](https://github.com/GooglyBlox/auto-mcgraw), but uses a different frame and screenshot adapter for Pearson.
 
-> **Compatibility status:** Tested with mock pages and a rendered MathML fixture. It has **not** been tested in an authenticated, live Pearson MyLab account. Do not assume it will complete every assignment correctly. AI responses and third-party website layouts change; review answers before checking.
+> **Experimental:** the extension and its Gemini/Pearson integration have NOT been tested end-to-end on a real authenticated Pearson and Gemini session. Tested against offline HTML simulations and unit tests only. Site UI changes may still break it. No guarantee of correct answers or full completion.
 
-## Installation
+## Install / replace v0.3
 
-1. Remove earlier Auto-Pearson extension versions from `chrome://extensions` (avoids conflicts between two unpacked versions).
-2. Extract this ZIP. In Chrome, open `chrome://extensions`, enable **Developer mode**, click **Load unpacked**, and select the **extension** directory containing `manifest.json`.
-3. Refresh the open Pearson homework tab **after** installation.
-4. Open Gemini, ChatGPT, or DeepSeek in a separate tab and sign in there yourself (the extension does not ask for or retain your password).
-5. Open the Auto-Pearson popup. Select the assistant, and choose **Scan frames**. The diagnostic area will show the frame, option count, and a short extract of the question.
-6. Keep **Pause before submitting** enabled while validating a new question type. Click **Start** in the popup or the floating panel on Pearson. **Stop** ends the run.
+1. **Remove** previous Auto-Pearson versions at `chrome://extensions` (otherwise two extensions can interfere).
+2. Extract the ZIP archive.
+3. In Chrome, open `chrome://extensions`, enable **Developer mode**, choose **Load unpacked**, and select the enclosed **`extension`** folder (containing `manifest.json`).
+4. Open your Pearson **MyLab homework**, not an exam/quiz, and reload the tab once.
+5. Open `https://gemini.google.com/app` in another tab and sign in yourself. **The extension never requests your login, password, token, or cookies.**
+6. While the **Pearson** tab is active, click Auto-Pearson's icon in Chrome's Extensions menu. Choose Gemini. The popup is deliberately 600px wide.
+7. Click **Preview question crop** and check that your actual question and every answer choice are visible; the question crop should be legible. The screenshot is cropped to skip the Pearson account header, sidebar, and lower controls. If part is outside the visible screen, scroll it into view.
+8. Click **Test AI connection**, then **Scan frames**, then **Start**.
+9. Initially leave **Pause before submitting** checked to verify that selected answers are correct. To enable automated **Check Answer / Next** attempts, uncheck Pause before submitting and keep Advance after checking enabled. If the player's Next controls cannot be safely identified, it will wait for you to advance manually.
 
-## What changed from 0.2.0
+**Note about Start:** `chrome.tabs.captureVisibleTab` requires `activeTab` permission, granted by opening the extension icon on the active Pearson tab. Starting only from the floating in-page panel, or from a separately opened settings window, may lack that temporary screenshot grant. If Chrome reports a capture-permission error, open the extension from the Chrome toolbar while on Pearson and start there. For security, the extension does **not** request unrestricted access to other websites.
 
-- Recover from `Receiving end does not exist` by pinging and reinjecting the content script into the **specific permitted Pearson frame**, then retrying.
-- Communicate a single tab-level run status and filled count from the question frame to the popup and floating toolbar, preventing divergent status displays.
-- Preserve MathML, LaTeX annotations, and accessible SVG/image captions when extracting a question. Unreadable equations/images are flagged rather than silently removed.
-- A deterministic check for common two-sided **z** critical values. E.g. \(\bar{x}\pm1.645\sigma/\sqrt n\) corresponds to **90%** confidence, not 165%. This is narrowly scoped and not a general math solver.
-- Reject unstructured AI output and impossible probability/confidence answers over 100%.
-- Wider popup with Start, Stop, Scan Frames, question excerpt, and diagnostics.
-- Optional **Capture visible question**: from the popup while the Pearson tab is selected, capture the currently visible content, crop the account/header region, and preview the image. The crop is kept only in `chrome.storage.session`. It is sent to the chosen AI tab **only** when attachment mode is selected, and removed after one use. Screenshot uploads depend on the current AI site's file-upload controls and may fail cleanly.
-- The extension intentionally does **not** request `cookies`, unrestricted `<all_urls>`, or `debugger` privileges. It needs permission to access the Pearson and selected AI domains, not passwords or unrestricted access to your browser.
+## Design
 
-## When a question is not supported
+For each supported problem, the flow is:
 
-- If Scan frames says a frame is unreachable, verify **Site access** in `chrome://extensions` → Auto-Pearson → Details and refresh the homework page. A cross-origin frame that Chrome doesn't grant access to cannot be read by the content script.
-- If the question contains unrecognizable images/formulas, use **Capture visible question** and inspect the crop. The helper will not blindly select an option from incomplete mathematical text.
-- If the AI response is not structured JSON, the extension pauses rather than guessing.
-- When Pearson re-creates or navigates the question iframe, Stop and Start again if necessary. Automatic resumption across every possible Pearson page transition has not been validated.
-- The UI automations depend on Pearson and the AI provider DOM. Changes in their pages can require a new adapter.
-- Matching, custom symbolic math editors, and drag-and-drop controls are not comprehensively supported. Double-credit and random-confidence from the McGraw project are not native Pearson features.
-
-## Privacy and limits
-
-The extension reads visible problem text and controls, never your password/cookies. The image feature crops the screenshot to the central problem pane to omit the usual account header, but *inspect the preview before enabling attachment* because other personal information may still appear in the question itself. The image is uploaded through your chosen signed-in AI tab; its privacy terms then apply. The screenshot is not saved in Chrome Sync or transmitted to any developer server.
-
-Only activate this on assignments where using such assistance is permitted by the course's academic-integrity rules.
-
-## Development / tests
-
-Requires Node 22+ and Python with Playwright + a local Chromium binary.
-
+```text
+Pearson current question (including embedded frame)
+  -> extract question type, options and visible text
+  -> screenshot the active Pearson tab automatically
+  -> hide the floating toolbar and crop out account/header/sidebar
+  -> switch to a signed-in Gemini tab
+  -> paste/upload image + write JSON-only solving prompt
+  -> wait for a NEW completed assistant response
+  -> switch back to the originating Pearson frame
+  -> parse structured JSON, validate selection
+  -> fill radio/checkbox/input/dropdown where possible
+  -> optionally click Check Answer and Next/Continue
+  -> repeat for a new question, or stop with a visible reason
 ```
-node --test tests/*.test.js
-python tests/math-browser-smoke.py
+
+Supported targets: radio-based multiple choice, checkboxes/multi-select, basic text fields, standard dropdowns. Unsupported or unverified: Pearson equation editors, drag-and-drop/matching UIs, arbitrary graph drawing, questions requiring hidden data, remote examination interfaces. Some matching questions may work as dropdowns.
+
+## Privacy and safety
+
+- Extension content scripts only target Pearson homework/player hosts and the three explicitly selected AI chat hosts. Login/SSO Pearson hosts have no content-script access.
+- No passwords, cookies, or session tokens are read, stored, or sent.
+- A temporary full-tab screenshot is acquired via Chrome's tab capture API, cropped inside the Pearson page's content script, and only the crop is passed to the AI tab.
+- Cropping uses visible viewport coordinates, not semantic identification of all sensitive elements. **Check the Preview first**. A screenshot may still contain personal or course information shown inside the question area.
+- The screenshot and prompt are sent to the chosen third-party AI service and subject to its data policies. Turn off **Send screenshot with every question** to send extracted text alone (which is unreliable with image-based formulas).
+- The content script never writes login credentials, navigates to financial/payment pages, or reads Chrome saved passwords. No background tracking or exfiltration endpoints.
+- The extension refuses or pauses when question fields change mid-response, when it cannot match the AI's answer to an option, when the AI response is not structured JSON, and for some obvious math contradictions.
+- AI answers can still be wrong. Review the result and check your school's academic-integrity requirements.
+
+## Tests
+
+Unit tests (requires Node.js):
+
+```sh
+node --test tests/answer-utils.test.js tests/math.test.js tests/frame-routing.test.js tests/vision-routing.test.js
+```
+
+Offline browser tests (requires `python` with `playwright` plus a local Chromium binary):
+
+```sh
+python tests/assistant-vision-smoke.py
 python tests/browser-smoke.py
-python tests/toolbar-regression.py
+python tests/math-browser-smoke.py
 python tests/popup-smoke.py
+python tests/toolbar-regression.py
 ```
 
-These validate the parser, the receiving-end recovery mock, the visible question scanner, a real MathML DOM fixture, the toolbar and popup. They **do not** constitute end-to-end validation on the real Pearson or AI websites.
+The offline tests exercise question extraction and choices, a screenshot→Gemini→Pearson message-routing simulation, simulated Gemini image-file upload and generated JSON reply, and popup controls. They **cannot certify** upload behavior on real Gemini or DOM layout on real Pearson, which can change.
 
-Reference inspiration: https://github.com/GooglyBlox/auto-mcgraw (MIT licensed; implementation here is independently written).
+## Troubleshooting
+
+- **"Receiving end does not exist"**: refresh Pearson and Gemini tabs and try Scan frames. Old extensions must be removed.
+- **"No screenshot permission"**: click the extension icon while the Pearson tab is active and start from that popup, not just from the floating in-page button.
+- **"No image attachment preview"**: Gemini's upload UI changed or upload is disabled for your account/model. The extension stops instead of silently submitting text only. Try Test AI connection; updating the Gemini adapter may be needed.
+- **Question crop misses a graph/equation**: scroll the page so the entire current question fits the visible viewport. The automatic crop uses the central question area; use Preview to inspect it.
+- **"Answer filled" but no Check/Next**: Pearson has a different player widget or feedback state. Review and click manually, or send the precise status/error for a page-specific adapter.
+- **Wrong choice**: Stop immediately and keep Pause before submitting enabled. AI suggestions are not guaranteed correct.
+
+The reference auto-mcgraw extension is an independent MIT-licensed project; this build is not endorsed by Pearson or any AI provider.

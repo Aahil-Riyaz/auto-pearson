@@ -1,120 +1,149 @@
 (() => {
   'use strict';
-  if (window.__autoPearsonAssistant) return;
-  window.__autoPearsonAssistant = true;
-  const hostname = location.hostname;
-  const model = hostname.includes('gemini') ? 'gemini' : hostname.includes('deepseek') ? 'deepseek' : 'chatgpt';
+  if (window.__autoPearsonAssistantV4) return;
+  window.__autoPearsonAssistantV4 = true;
+
+  const model = location.hostname.startsWith('gemini.') ? 'gemini' : location.hostname.includes('deepseek') ? 'deepseek' : 'chatgpt';
   const config = {
-    chatgpt: {
-      composer: ['#prompt-textarea', '[contenteditable="true"][data-testid*="prompt"]', 'textarea'],
-      send: ['[data-testid="send-button"]', 'button[aria-label="Send prompt"]'],
-      messages: ['[data-message-author-role="assistant"]', '[data-testid="conversation-turn-assistant"]']
-    },
     gemini: {
-      composer: ['.ql-editor[contenteditable="true"]', 'rich-textarea [contenteditable="true"]', '[contenteditable="true"]'],
-      send: ['button[aria-label*="Send"]', '.send-button button', 'button[mattooltip*="Send"]'],
-      messages: ['model-response', '.model-response-text', '.markdown']
+      composer:['rich-textarea .ql-editor[contenteditable="true"]','.ql-editor[contenteditable="true"]','div[contenteditable="true"][role="textbox"]','rich-textarea [contenteditable="true"]'],
+      send:['button.send-button:not(.stop)','button[aria-label="Send message"]','button[aria-label*="Send"]','.send-button button','button[mattooltip*="Send"]'],
+      messages:['model-response','.model-response']
+    },
+    chatgpt: {
+      composer:['#prompt-textarea','[contenteditable="true"][data-testid*="prompt"]','textarea'],
+      send:['[data-testid="send-button"]','button[aria-label="Send prompt"]','button[aria-label="Send message"]'],
+      messages:['[data-message-author-role="assistant"]','[data-testid="conversation-turn-assistant"]']
     },
     deepseek: {
-      composer: ['textarea', '[contenteditable="true"]'],
-      send: ['button[aria-label*="Send"]', 'button[aria-label*="send"]'],
-      messages: ['.ds-markdown', '[class*="markdown"]']
+      composer:['textarea','[contenteditable="true"]'],
+      send:['button[aria-label*="Send"]','button[aria-label*="send"]'],
+      messages:['.ds-markdown','[class*="markdown"]']
     }
   }[model];
-  const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
-  const visible = node => !!node && node.getClientRects().length > 0;
-  const firstVisible = selectors => {
-    for (const selector of selectors) {
-      const found = [...document.querySelectorAll(selector)].find(visible);
-      if (found) return found;
-    }
-    return null;
-  };
-  const responses = () => [...document.querySelectorAll(config.messages.join(','))].filter(visible);
-  const lastResponse = () => responses().at(-1)?.innerText?.trim() || '';
-  const generating = () => !!document.querySelector('[data-testid="stop-button"],button[aria-label*="Stop generating"],button[aria-label*="Stop response"]');
-  function setText(el, value) {
+  const delay=ms=>new Promise(r=>setTimeout(r,ms));
+  const visible=el=>Boolean(el && el.getClientRects().length);
+  function firstVisible(selectors){for(const s of selectors){const e=[...document.querySelectorAll(s)].find(visible);if(e)return e;}return null;}
+  function responses(){const all=[...document.querySelectorAll(config.messages.join(','))].filter(visible);return all.filter(e=>!all.some(parent=>parent!==e && parent.contains(e)));}
+  function lastResponse(){return responses().at(-1)?.innerText?.trim()||'';}
+  function generating(){return Boolean(document.querySelector('button.send-button.stop,[data-testid="stop-button"],button[aria-label*="Stop generating"],button[aria-label*="Stop response"]'));}
+  async function waitUntil(fn,ms=10000){const end=Date.now()+ms;while(Date.now()<end){const v=fn();if(v)return v;await delay(220);}return null;}
+  function status(requestId,stage){chrome.runtime.sendMessage({type:'PEARSON_AI_STATUS',requestId,stage}).catch(()=>{});}
+
+  function writeComposer(el,text){
     el.focus();
-    if (el.matches('textarea,input')) {
-      const descriptor = Object.getOwnPropertyDescriptor(el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype, 'value');
-      descriptor.set.call(el, value);
+    if(el.matches('textarea,input')){
+      const proto=el.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;
+      Object.getOwnPropertyDescriptor(proto,'value').set.call(el,text);
     } else {
-      // Browser-based chat editors use different rich-text engines. A native
-      // insertText command often triggers the editor where assigning textContent does not.
-      const selection = window.getSelection();
-      const range = document.createRange();
-      range.selectNodeContents(el);
-      selection.removeAllRanges();
-      selection.addRange(range);
-      const inserted = document.execCommand?.('insertText', false, value);
-      if (!inserted) el.textContent = value;
+      const sel=window.getSelection(),r=document.createRange();r.selectNodeContents(el);sel.removeAllRanges();sel.addRange(r);
+      if (!document.execCommand('insertText',false,text)) el.textContent=text;
     }
-    el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: value }));
-    el.dispatchEvent(new Event('change', { bubbles: true }));
+    el.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:text}));
+    el.dispatchEvent(new Event('change',{bubbles:true}));
+    return (el.value??el.textContent??'').includes(text.slice(0,28));
   }
-  async function waitUntil(predicate, timeout = 12000) {
-    const until = Date.now() + timeout;
-    while (Date.now() < until) {
-      const output = predicate(); if (output) return output;
-      await delay(250);
-    }
-    return null;
+
+  function previewCount(){
+    return document.querySelectorAll('img[src^="blob:"],img[src^="data:image"],file-preview,.file-preview,.attachment-preview,[data-testid*="attachment"],[data-testid*="file-chip"],uploaded-file').length;
   }
-  async function attachScreenshot(dataUrl) {
-    if (!/^data:image\/(?:jpeg|png);base64,/.test(dataUrl)) throw new Error('Invalid question image.');
-    let fileInput=[...document.querySelectorAll('input[type="file"]')].find(el=>!el.disabled && (!el.accept || /image|\*/i.test(el.accept)));
-    if (!fileInput) {
-      // Many chat UIs only create a file input after the attachment menu opens.
-      const openMenu=[...document.querySelectorAll('button')].find(btn=>/attach|add files|upload|add.*image|add.*photo/i.test([btn.getAttribute('aria-label'),btn.title,btn.textContent].join(' ')));
-      if (openMenu) {openMenu.click(); await delay(450);fileInput=[...document.querySelectorAll('input[type="file"]')].find(el=>!el.disabled);}
-    }
-    if (!fileInput) throw new Error('The AI tab does not expose an image-upload field. Disable screenshot mode or use another AI assistant.');
-    const response=await fetch(dataUrl);const blob=await response.blob();
-    const file=new File([blob],'pearson-question.jpg',{type:blob.type||'image/jpeg'});
+  async function attachScreenshot(data,requestId){
+    if(typeof data!=='string'||!/^data:image\/(jpeg|png);base64,/.test(data))throw new Error('Invalid screenshot image.');
+    const blob=await (await fetch(data)).blob();
+    const file=new File([blob],'pearson-visible-question.jpg',{type:blob.type||'image/jpeg'});
+    const before=previewCount();
     const transfer=new DataTransfer();transfer.items.add(file);
-    fileInput.files=transfer.files;
-    fileInput.dispatchEvent(new Event('input',{bubbles:true}));
-    fileInput.dispatchEvent(new Event('change',{bubbles:true}));
-    await delay(1500); // Let the AI website begin uploading before sending.
-  }
-  async function getAnswer(prompt,screenshot) {
-    const composer = await waitUntil(() => firstVisible(config.composer));
-    if (!composer) throw new Error(`Unable to find the ${model} message composer. Check you're signed in.`);
-    const before = lastResponse();
-    const count = responses().length;
-    setText(composer, screenshot ? `${prompt}\n\nThe cropped visible question is attached as an image. Use it to read any missing mathematical notation; do not guess.` : prompt);
-    if (screenshot) await attachScreenshot(screenshot);
-    const sendButton = await waitUntil(() => {
-      const element = firstVisible(config.send);
-      return element && !element.disabled ? element : null;
-    }, 5000);
-    if (sendButton && !sendButton.disabled) sendButton.click();
-    else throw new Error(`Unable to find the ${model} send button. Its UI may have changed.`);
-    await delay(900);
-    let stable = 0, previous = '';
-    const end = Date.now() + 180000;
-    while (Date.now() < end) {
-      const current = lastResponse();
-      const changed = responses().length > count || (current && current !== before);
-      if (changed && current.length > 5 && !generating()) {
-        if (current === previous) stable += 1; else stable = 0;
-        if (stable >= 3) return current;
-      } else stable = 0;
-      previous = current;
-      await delay(650);
+    const editor=await waitUntil(()=>firstVisible(config.composer));
+    if(!editor) throw new Error('No AI text composer is visible.');
+    status(requestId,`Attaching question image in ${model}…`);
+    // Gemini and several other chat composers accept image paste events directly.
+    try{
+      editor.focus();editor.dispatchEvent(new ClipboardEvent('paste',{bubbles:true,cancelable:true,clipboardData:transfer}));
+      if(await waitUntil(()=>previewCount()>before,3200)){ await delay(700);return 'paste'; }
+    }catch{}
+    // Fallback: use the site's own file upload input, if present. Never access OS files.
+    const findInput=()=>[...document.querySelectorAll('input[type="file"]')].find(el=>!el.disabled && (!el.accept||/image|\*/i.test(el.accept)));
+    let input=findInput();
+    if(!input){
+      // Suppress only the native OS file-picker action while exposing Gemini's
+      // dynamic upload input. No local files or passwords are accessed.
+      const suppressPicker=event=>{
+        if(event.target instanceof HTMLInputElement && event.target.type==='file') event.preventDefault();
+      };
+      document.addEventListener('click',suppressPicker,true);
+      try {
+        const menu=firstVisible(['button[aria-label*="Open upload file menu"]','button[aria-label*="Add files"]','button[aria-label*="Upload"]','button[aria-label*="Attach"]','button[aria-label*="Add"]']);
+        if(menu) {menu.click();await delay(320);}
+        let upload=[...document.querySelectorAll('button,[role="menuitem"]')].find(el=>visible(el)&&/^(upload files?|upload images?|files? from (?:computer|device)|browse files?)$/i.test((el.innerText||el.getAttribute('aria-label')||'').trim()));
+        if(upload) {upload.click();await delay(350);}
+        input=findInput();
+      } finally { document.removeEventListener('click',suppressPicker,true); }
     }
-    throw new Error(`${model} didn't return a completed response. Its page layout may have changed.`);
+    if(!input)throw new Error(`${model} did not accept pasted image and no upload input was found. Its image-upload UI needs an adapter update.`);
+    input.files=transfer.files;
+    input.dispatchEvent(new Event('input',{bubbles:true}));
+    input.dispatchEvent(new Event('change',{bubbles:true}));
+    if(!input.files?.length)throw new Error(`${model} rejected the screenshot file.`);
+    const appeared=await waitUntil(()=>previewCount()>before,6000);
+    if(!appeared)throw new Error(`Screenshot sent to ${model}'s upload input but no attachment preview appeared. Stopping before submission rather than sending text without the image.`);
+    await delay(900);
+    return 'file-input';
   }
-  let busy = false;
-  chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-    if (msg.type === 'PEARSON_AI_PING') {sendResponse({ok:true});return;}
-    if (msg.type !== 'PEARSON_ASK') return;
-    if (busy) { sendResponse({ ok: false, error: 'AI tab is busy' }); return; }
-    busy = true;
-    sendResponse({ ok: true });
-    getAnswer(msg.question,msg.screenshot)
-      .then(answer => chrome.runtime.sendMessage({ type: 'PEARSON_AI_RESULT', requestId: msg.requestId, answer }))
-      .catch(error => chrome.runtime.sendMessage({ type: 'PEARSON_AI_RESULT', requestId: msg.requestId, error: error.message }))
-      .finally(() => { busy = false; });
+
+  let request=null;
+  async function run(job){
+    const id=job.requestId;
+    const outdated=()=>request!==job;
+    status(id,`Reading ${model}'s message editor…`);
+    const editor=await waitUntil(()=>firstVisible(config.composer),12000);
+    if(!editor)throw new Error(`Cannot find ${model}'s prompt box. Make sure you're logged in and on its chat screen.`);
+    const previousNodes=responses();
+    const lastNode=previousNodes.at(-1)||null, priorText=lastNode?.innerText||'';
+    if(job.screenshot) await attachScreenshot(job.screenshot,id);
+    if(outdated())return;
+    status(id,`Sending prompt to ${model}…`);
+    const text=job.question+(job.screenshot?'\n\nIMPORTANT: The attached image is the authoritative source for mathematical formulas and answer options. Read the actual image. If a formula is clipped or illegible, return an empty answers array; do not guess.':'');
+    if(!writeComposer(editor,text)) throw new Error(`${model} did not accept the question text.`);
+    const button=await waitUntil(()=>{const el=firstVisible(config.send);return el&&!el.disabled?el:null;},9000);
+    if(!button)throw new Error(`${model} send button was not found or stayed disabled. The UI may have changed.`);
+    button.click();
+    if(outdated())return;
+    await delay(1100);
+    status(id,`Waiting for ${model}'s completed response…`);
+    let old='',steady=0;
+    const deadline=Date.now()+175000;
+    while(Date.now()<deadline){
+      if(outdated())return;
+      const nodes=responses(),node=nodes.at(-1)||null;
+      const contents=node?.innerText?.trim()||'';
+      const newlyGenerated=Boolean(node && (node!==lastNode || contents!==priorText));
+      if(newlyGenerated && contents.length>10 && !generating()){
+        steady=contents===old?steady+1:0;
+        if(steady>=4){
+          status(id,`Answer received from ${model}.`);
+          return contents;
+        }
+      }else steady=0;
+      old=contents;
+      await delay(700);
+    }
+    throw new Error(`${model} did not produce a completed answer within the timeout. Check the Gemini tab for errors or rate limits.`);
+  }
+
+  chrome.runtime.onMessage.addListener((msg,sender,reply)=>{
+    if(msg.type==='PEARSON_AI_PING'){reply({ok:true,model,busy:!!request});return;}
+    if(msg.type==='PEARSON_AI_CANCEL'){
+      if(request?.requestId===msg.requestId)request=null;
+      reply({ok:true});return;
+    }
+    if(msg.type!=='PEARSON_ASK')return;
+    if(request){reply({ok:false,error:'The assistant tab is already handling a question.'});return;}
+    request={requestId:msg.requestId,question:msg.question,screenshot:msg.screenshot};
+    const job=request;
+    reply({ok:true});
+    run(job).then(answer=>{if(request===job)return chrome.runtime.sendMessage({type:'PEARSON_AI_RESULT',requestId:job.requestId,answer});})
+      .catch(error=>{if(request===job)return chrome.runtime.sendMessage({type:'PEARSON_AI_RESULT',requestId:job.requestId,error:error.message||String(error)});})
+      .catch(console.error)
+      .finally(()=>{if(request===job)request=null;});
   });
 })();
