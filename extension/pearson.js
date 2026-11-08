@@ -31,7 +31,11 @@
   // in the DOM underneath a modal. That button MUST NOT block Next question.
   // Only treat a button as completion navigation when success feedback is near it
   // or inside a visible dialog, never merely because it says "Next".
-  const SUCCESS = /\b(well done|good job|great job|nice work|correct answer|that's correct|that is correct|you got it|congratulations)\b/i;
+  // Pearson uses several randomized positive feedback titles (for example,
+  // "Well done!" and "Fantastic!"). The confirmation must still be near a
+  // visible Next/Continue button or inside a visible result dialog: simply
+  // finding a positive word elsewhere on the homework page is not enough.
+  const SUCCESS = /\b(well done|fantastic|excellent|awesome|perfect|brilliant|good job|great job|great work|nice work|nice job|correct answer|that's correct|that is correct|you got it|congratulations)\b/i;
   const INCORRECT = /\b(incorrect|not correct|not quite|try again|wrong answer)\b/i;
   const FINISHED = /\b(homework complete|assignment complete|all questions complete|you(?:'ve| have) finished|end of assignment)\b/i;
   function completionState() {

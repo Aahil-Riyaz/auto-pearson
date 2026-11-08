@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Auto-Pearson",
-  "version": "0.6.0",
-  "description": "Pearson homework assistant with correct-answer modal navigation and multi-part homework progression.",
+  "version": "0.6.1",
+  "description": "Pearson homework assistant with expanded success-popup detection and multi-part homework progression.",
   "permissions": [
     "activeTab",
     "scripting",

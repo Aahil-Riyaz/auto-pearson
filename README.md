@@ -1,8 +1,15 @@
-# Auto-Pearson v0.6.0 — Next Question and multi-part fix
+# Auto-Pearson v0.6.1 — Fantastic! success popup fix
 
 Experimental Chrome Manifest V3 extension for Pearson MyLab **homework**. This is an independent project, not affiliated with Pearson or Google. It follows the broad screenshot → Gemini → answer → Pearson workflow from the user's reference extension, Auto-McGraw.
 
-## What changed from v0.5.0
+## What changed from v0.6.0
+
+- **Fixes the live Pearson “Fantastic!” popup.** The v0.6 success detector recognized “Well done!” but not “Fantastic!”. That left the extension at “Checking answer…” despite Pearson accepting the response. v0.6.1 recognizes “Fantastic!” and other clearly positive success titles and clicks the dialog’s **Next question** button.
+- **Retains the no-blind-navigation rule.** A matching positive message must appear inside visible result feedback or near the Next/Continue control. The Check Answer button behind the result screen cannot block Next.
+- **Prevents extra Gemini requests on result screens.** The question loop and screenshot guard continue checking the positive feedback before capturing any new question.
+- **Regression coverage:** Added a new browser test for a “Fantastic!” success overlay without a `role="dialog"`, followed by the next question; the previous 10-subpart “Well done!” test still passes.
+
+## Features retained from v0.5.0 and v0.6.0
 
 - **Clicks “Next question” after correct submissions.** Pearson's “Well done!” dialog can overlay an older **Check Answer** button, which v0.5 incorrectly treated as a reason not to advance. The new code recognizes visible success feedback and prioritizes its Next question/Continue button.
 - **Handles multiple subparts.** After navigation, it waits for a truly fresh question or answer controls. It supports identical question text and choices across consecutive parts, rather than treating the next part as the previous answer again.
@@ -14,7 +21,7 @@ Experimental Chrome Manifest V3 extension for Pearson MyLab **homework**. This i
 ## Installation
 
 1. At `chrome://extensions`, **remove the previous Auto-Pearson** version to prevent two extensions from acting on the same page.
-2. Unzip the archive. Choose **Load unpacked** and select `auto-pearson-v0.6.0/extension` (the folder that contains `manifest.json`).
+2. Unzip the archive. Choose **Load unpacked** and select `auto-pearson-v0.6.1/extension` (the folder that contains `manifest.json`).
 3. Refresh the Pearson homework tab and your signed-in Gemini tab.
 4. Open the Auto-Pearson Chrome toolbar popup **while Pearson is active**. Select Gemini.
 5. For the requested automatic flow, turn **Pause before submitting OFF** and **Advance after checking ON**. Keep **Send screenshot with every question ON**.
@@ -27,6 +34,7 @@ The sequence is: capture the full visible Pearson tab → send it to Gemini → 
 ```bash
 node --test tests/*.test.js
 python tests/navigation-smoke.py
+python tests/fantastic-navigation-smoke.py
 python tests/browser-smoke.py
 python tests/math-browser-smoke.py
 python tests/click-verification-smoke.py
@@ -36,10 +44,10 @@ python tests/screenshot-full-smoke.py
 python tests/toolbar-regression.py
 ```
 
-The new navigation mock reproduces the Pearson **Well done! → Next question** modal while a Check Answer button remains behind it, then progresses through **ten identically worded subparts**, and verifies no AI request occurs on a feedback screen. A separate background-worker test verifies navigation when the success dialog is in a different frame; a screenshot test verifies feedback is never transmitted to Gemini. All these are simulated tests, not a claim of authenticated live-site verification.
+The new navigation mock reproduces the Pearson **Well done! → Next question** and **Fantastic! → Next question** modal while a Check Answer button remains behind it, then progresses through **ten identically worded subparts**, and verifies no AI request occurs on a feedback screen. A separate background-worker test verifies navigation when the success dialog is in a different frame; a screenshot test verifies feedback is never transmitted to Gemini. All these are simulated tests, not a claim of authenticated live-site verification.
 
 ## Compatibility and privacy
 
-The actual user screenshots showed that v0.5 could correctly fill option B, submit and receive a “Well done!” result. The **v0.6 advancement path has not been verified against the user's authenticated Pearson/Gemini session**, so UI changes and unusual question widgets could still require adjustments. No guarantee of a perfect grade or unrestricted access is offered.
+The actual user screenshots showed that v0.5 could correctly fill option B, submit and receive a “Well done!” result. The **v0.6.1 advancement path has not been verified against the user's authenticated Pearson/Gemini session**, so UI changes and unusual question widgets could still require adjustments. No guarantee of a perfect grade or unrestricted access is offered.
 
 The extension does not inspect login/SSO frames or read passwords, Chrome cookies, or saved login credentials. Vision mode sends the **entire visible Pearson tab** to your selected AI service, which can include your displayed name, course, sidebar, formulas and options. It does not capture the desktop or other tabs. Follow your institution's academic-integrity policies.
