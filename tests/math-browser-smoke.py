@@ -19,7 +19,7 @@ with sync_playwright() as p:
         storage:{sync:{get:async d=>d},onChanged:{addListener:()=>{}}}
     };}''')
     for f in ('answer-utils.js','math.js','pearson.js'):
-        page.add_script_tag(content=(root/'extension'/f).read_text())
+        page.add_script_tag(content=(root/'extension'/f).read_text(encoding='utf-8'))
     diagnosis=page.evaluate('''async () => {
       return new Promise(resolve=>window.handlers.forEach(fn=>fn({type:'PEARSON_PROBE'},{},r=>r?.ok&&resolve(r))));
     }''')

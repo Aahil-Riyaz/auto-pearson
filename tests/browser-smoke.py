@@ -8,7 +8,7 @@ with sync_playwright() as playwright:
     browser = playwright.chromium.launch(executable_path=os.environ.get('CHROMIUM_PATH'), headless=True, args=['--no-sandbox', '--disable-dev-shm-usage'])
     page = browser.new_page()
     page.on('pageerror', lambda error: print('Browser JS error:', error))
-    html = (root / 'tests' / 'fixture.html').read_text().split('<script>')[0]
+    html = (root / 'tests' / 'fixture.html').read_text(encoding='utf-8').split('<script>')[0]
     page.set_content(html)
     page.evaluate('''() => {
       window.confirm = () => true;
@@ -30,9 +30,9 @@ with sync_playwright() as playwright:
          storage: { sync: { get: async defaults => defaults }, onChanged: {addListener: () => {}} }
       };
     }''')
-    page.add_script_tag(content=(root / 'extension' / 'answer-utils.js').read_text())
-    page.add_script_tag(content=(root / 'extension' / 'math.js').read_text())
-    page.add_script_tag(content=(root / 'extension' / 'pearson.js').read_text())
+    page.add_script_tag(content=(root / 'extension' / 'answer-utils.js').read_text(encoding='utf-8'))
+    page.add_script_tag(content=(root / 'extension' / 'math.js').read_text(encoding='utf-8'))
+    page.add_script_tag(content=(root / 'extension' / 'pearson.js').read_text(encoding='utf-8'))
     page.wait_for_selector('#auto-pearson-widget')
     page.locator('#auto-pearson-widget').locator('button#start').click()
     page.wait_for_function("document.querySelector('input[value=Paris]').checked === true")

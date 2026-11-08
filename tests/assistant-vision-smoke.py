@@ -12,7 +12,7 @@ with sync_playwright() as pw:
     document.querySelector('button').onclick=()=>{window.sent=document.querySelector('.ql-editor').textContent;setTimeout(()=>{const r=document.createElement('model-response');r.innerText='{"answers":["B"],"explanation":"the 90% choice"}';document.body.appendChild(r);},250)};
     </script>''')
     page.evaluate('''() => {window.handlers=[];window.messages=[];window.chrome={runtime:{onMessage:{addListener:f=>handlers.push(f)},sendMessage:async m=>{messages.push(m);return {ok:true};}}};}''')
-    code=(root/'extension/assistant.js').read_text().replace('location.hostname.startsWith(\'gemini.\')', 'true')
+    code=(root/'extension/assistant.js').read_text(encoding='utf-8').replace('location.hostname.startsWith(\'gemini.\')', 'true')
     page.add_script_tag(content=code)
     png='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y1grxEAAAAASUVORK5CYII='
     page.evaluate('''image => {window.handlers.forEach(fn=>fn({type:'PEARSON_ASK',requestId:'test-1',question:'Which confidence level? Answer in JSON',screenshot:image},{},r=>{window.accepted=r}));}''',png)

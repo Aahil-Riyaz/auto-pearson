@@ -88,7 +88,7 @@ with sync_playwright() as p:
     page.on('pageerror', lambda e: page.evaluate('window.errors.push(arguments[0])', str(e)))
     page.evaluate(setup)
     for filename in ('answer-utils.js','math.js','pearson.js'):
-        page.add_script_tag(content=(root/'extension'/filename).read_text())
+        page.add_script_tag(content=(root/'extension'/filename).read_text(encoding='utf-8'))
     page.evaluate('''() => {for(const f of window.handler) f({type:'PEARSON_START_FRAME'},{},()=>{});}''')
     page.wait_for_function('window.currentStep===2 && window.requests.length>=3',timeout=35000)
     page.wait_for_function('''() => document.querySelector('#auto-pearson-widget').shadowRoot.querySelector('#status').textContent.includes('complete')''', timeout=10000)

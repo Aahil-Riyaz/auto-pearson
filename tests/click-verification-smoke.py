@@ -21,7 +21,7 @@ with sync_playwright() as p:
       storage:{sync:{get:async d=>({...d,pauseBeforeSubmit:false})},onChanged:{addListener:()=>{}}}
     };}''')
     for f in ('answer-utils.js','math.js','pearson.js'):
-        page.add_script_tag(content=(root/'extension'/f).read_text())
+        page.add_script_tag(content=(root/'extension'/f).read_text(encoding='utf-8'))
     started=page.evaluate('''() => new Promise(resolve=>handlers.forEach(fn=>fn({type:'PEARSON_START_FRAME'},{},r=>r&&resolve(r))))''')
     assert started['ok'],started
     page.wait_for_function("document.querySelector('#auto-pearson-widget').shadowRoot.querySelector('#status').textContent.includes('did not register the click')",timeout=6500)

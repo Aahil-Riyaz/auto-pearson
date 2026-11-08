@@ -19,7 +19,7 @@ with sync_playwright() as pw:
   page.set_content('<div>Mock Pearson</div>')
   page.evaluate('''() => {window.hand=[];window.chrome={runtime:{onMessage:{addListener:fn=>hand.push(fn)},sendMessage:async()=>({ok:true})},storage:{sync:{get:async d=>d},onChanged:{addListener:()=>{}}}}}''')
   for filename in ('answer-utils.js','math.js','pearson.js'):
-    page.add_script_tag(content=(root/'extension'/filename).read_text())
+    page.add_script_tag(content=(root/'extension'/filename).read_text(encoding='utf-8'))
   shot='data:image/png;base64,'+base64.b64encode(raw.getvalue()).decode()
   result=page.evaluate('''shot => new Promise(resolve => window.hand.forEach(fn=>fn({type:'PEARSON_CROP_IMAGE',shot}, {}, resolve)))''',shot)
   assert result['ok'],result

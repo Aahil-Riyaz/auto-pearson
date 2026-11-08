@@ -17,13 +17,13 @@ with sync_playwright() as playwright:
         storage: {sync:{get:async d=>d},onChanged:{addListener:()=>{}}}
       };
     }''')
-    page.add_script_tag(content=(root / 'extension' / 'answer-utils.js').read_text())
-    script=(root / 'extension' / 'pearson.js').read_text()
+    page.add_script_tag(content=(root / 'extension' / 'answer-utils.js').read_text(encoding='utf-8'))
+    script=(root / 'extension' / 'pearson.js').read_text(encoding='utf-8')
     marker='const isHomeworkPlayer = () => /(?:playerhomework|homework)/i.test(location.pathname) && window === window.top;'
     assert marker in script
     # Simulate the true path predicate without attempting network or filesystem navigation.
     script=script.replace(marker, 'const isHomeworkPlayer = () => window === window.top;')
-    page.add_script_tag(content=(root / 'extension' / 'math.js').read_text())
+    page.add_script_tag(content=(root / 'extension' / 'math.js').read_text(encoding='utf-8'))
     page.add_script_tag(content=script)
     toolbar=page.locator('#auto-pearson-widget')
     toolbar.wait_for()
