@@ -22,6 +22,7 @@ with sync_playwright() as playwright:
     assert marker in script
     # Simulate the true path predicate without attempting network or filesystem navigation.
     script=script.replace(marker, 'const isHomeworkPlayer = () => window === window.top;')
+    page.add_script_tag(content=(root / 'extension' / 'math.js').read_text())
     page.add_script_tag(content=script)
     toolbar=page.locator('#auto-pearson-widget')
     toolbar.wait_for()

@@ -1,13 +1,14 @@
 {
   "manifest_version": 3,
-  "name": "Auto-Pearson (Experimental)",
-  "version": "0.2.0",
-  "description": "Frame-aware, opt-in Pearson MyLab homework helper with AI-assisted answer review.",
+  "name": "Auto-Pearson",
+  "version": "0.3.0",
+  "description": "Frame-aware Pearson MyLab helper with visible question diagnostics, math validation, and optional screenshot context.",
   "permissions": [
+    "activeTab",
+    "scripting",
     "storage",
     "tabs",
-    "webNavigation",
-    "scripting"
+    "webNavigation"
   ],
   "host_permissions": [
     "https://*.pearson.com/*",
@@ -35,6 +36,7 @@
       ],
       "js": [
         "answer-utils.js",
+        "math.js",
         "pearson.js"
       ],
       "all_frames": true,

@@ -10,7 +10,7 @@ with sync_playwright() as p:
     context.add_init_script('''
       window.chrome = {
         runtime:{
-          getManifest:()=>({version:'0.2.0'}),
+          getManifest:()=>({version:'0.3.0'}),
           sendMessage:async (msg) => {
             if(msg.action==='scan') return {ok:true,selected:{frameId:7,type:'multiple_choice',controls:4},frames:[{frameId:0,origin:'https://mylab.pearson.com',controls:0,question:false,type:'unknown'}, {frameId:7,origin:'https://exercise.pearsoncmg.com',controls:4,question:true,type:'multiple_choice'}],missing:[]};
             if(msg.action==='start') return {ok:true,message:'Started in frame 7 (multiple choice).'};
@@ -22,7 +22,7 @@ with sync_playwright() as p:
           query:async q => q.active ? [{id:44,title:'Pearson Homework 4',url:'https://mylab.pearson.com/Student/PlayerHomework.aspx'}] : [],
           onCreated:{addListener:()=>{}},onRemoved:{addListener:()=>{}}
         },
-        storage:{sync:{get:async d => d,set:async () => {} }}
+        storage:{sync:{get:async d => d,set:async () => {} }, session:{get:async()=>({}),set:async()=>{},remove:async()=>{}}}
       };
     ''')
     page=context.new_page()
@@ -33,7 +33,7 @@ with sync_playwright() as p:
     page.locator('#start').wait_for()
     assert page.locator('#start').is_enabled()
     assert page.locator('#stop').is_enabled()
-    assert page.locator('#version').inner_text()=='v0.2.0'
+    assert page.locator('#version').inner_text()=='v0.3.0'
     assert page.locator('body').evaluate('(el) => Math.round(el.getBoundingClientRect().width)')>=490
     page.locator('#scan').click()
     page.wait_for_function("document.querySelector('#runStatus').textContent.includes('Detected')")

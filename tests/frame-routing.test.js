@@ -4,7 +4,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-function harness({ iframeReadable = true } = {}) {
+function harness({ iframeReadable = true, iframeNeedsInjection = false } = {}) {
+  let injected = !iframeNeedsInjection;
   let listener;
   const calls = [];
   const url = 'https://mylab.pearson.com/Student/PlayerHomework.aspx';
@@ -17,7 +18,7 @@ function harness({ iframeReadable = true } = {}) {
         calls.push({tabId, message, options});
         if (message.type === 'PEARSON_PROBE') {
           if (options.frameId === 0) return {ok:true,question:false,controls:0,type:'unknown',origin:'https://mylab.pearson.com'};
-          if (iframeReadable) return {ok:true,question:true,controls:4,type:'multiple_choice',origin:'https://exercise.pearsoncmg.com'};
+          if (iframeReadable && injected) return {ok:true,question:true,controls:4,type:'multiple_choice',origin:'https://exercise.pearsoncmg.com'};
           throw new Error('No receiving end');
         }
         if (message.type === 'PEARSON_START_FRAME' || message.type === 'PEARSON_STOP_FRAME') return {ok:true};
@@ -25,8 +26,8 @@ function harness({ iframeReadable = true } = {}) {
       },
       onRemoved:{addListener:()=>{}}
     },
-    scripting:{executeScript:async () => []},
-    webNavigation:{getAllFrames:async () => [
+    scripting:{executeScript:async () => { if (iframeReadable) injected=true; return []; }},
+    webNavigation:{onCommitted:{addListener:()=>{}},getAllFrames:async () => [
       {frameId:0,url},
       {frameId:5,url:'https://exercise.pearsoncmg.com/item'},
     ]},
@@ -72,4 +73,13 @@ test('question frame can request Check Answer from outer Pearson player only', a
   assert.equal(action.message.action,'check');
   const invalid = await fromFrame({type:'PEARSON_PAGE_ACTION',action:'delete'});
   assert.equal(invalid.ok,false);
+});
+
+test('repairs receiving-end-missing by injecting into the precise child frame', async () => {
+  const {ask,calls} = harness({iframeNeedsInjection:true});
+  const result=await ask('scan');
+  assert.equal(result.ok,true);
+  assert.equal(result.selected.frameId,5);
+  const iframeProbes=calls.filter(c=>c.message.type==='PEARSON_PROBE' && c.options.frameId===5);
+  assert.ok(iframeProbes.length>=2,'should ping, inject, then ping again');
 });

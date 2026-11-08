@@ -1,6 +1,6 @@
 (() => {
   'use strict';
-  const DEFAULTS = { model: 'chatgpt', pauseBeforeSubmit: true, autoAdvance: false, repo: '' };
+  const DEFAULTS = { model: 'chatgpt', pauseBeforeSubmit: true, autoAdvance: false, includeVisual: false, repo: '' };
   const models = { chatgpt: 'https://chatgpt.com/*', gemini: 'https://gemini.google.com/*', deepseek: 'https://chat.deepseek.com/*' };
   const byId = id => document.getElementById(id);
   let saveTimeout;
@@ -29,17 +29,58 @@
       const result=await chrome.runtime.sendMessage({type:'PEARSON_CONTROL',action,tabId:pearsonTabId});
       if (action === 'scan' && result?.ok) {
         status.textContent=result.selected ? `Detected: ${result.selected.type.replaceAll('_',' ')} in frame ${result.selected.frameId}. ${result.selected.controls} answer controls.` : 'No supported question detected in accessible Pearson frames.';
-        const frames = result.frames.map(f=> `Frame ${f.frameId}: ${f.origin} · ${f.controls} control(s) · ${f.question ? f.type : 'no recognized question'}`);
-        const missing = result.missing.map(f=> `Unreachable frame ${f.frameId}: ${f.origin}`);
+        const frames = result.frames.map(f=> `Frame ${f.frameId}: ${f.origin} · ${f.controls} control(s) · ${f.question ? f.type : 'no recognized question'} · Math ${f.math?.formulas || 0} (${f.math?.unreadable || 0} unreadable)${f.deterministic ? ` · Verified ${f.deterministic}%` : ''}\n${f.excerpt?.slice(0,200)||''}`);
+        const missing = result.missing.map(f=> `Unreachable frame ${f.frameId}: ${f.origin} · ${f.reason||'Blocked'}`);
         byId('frameStatus').textContent=[...frames,...missing].slice(0,12).join('\n');
         byId('frameStatus').style.whiteSpace='pre-wrap';
       } else status.textContent=result?.error || result?.message || 'No response from extension.';
     } catch(error) { status.textContent=`Extension error: ${error.message}`; }
   }
+
+  async function refreshCapture() {
+    if (!pearsonTabId) return;
+    const item=await chrome.storage.session.get(`screenshot:${pearsonTabId}`);
+    const source=item[`screenshot:${pearsonTabId}`];
+    const preview=byId('capturePreview');
+    preview.style.display=source?'block':'none';
+    preview.src=source||'';
+    byId('captureStatus').textContent=source?'Question crop ready. Enable the checkbox to send it with the next AI question.':'No screenshot captured.';
+  }
+  byId('capture').addEventListener('click',async()=>{
+    const status=byId('captureStatus');
+    try {
+      if (!pearsonTabId) throw new Error('Open a Pearson homework tab first.');
+      const tab=await chrome.tabs.get(pearsonTabId);
+      const active=await chrome.tabs.query({active:true,windowId:tab.windowId});
+      if (active[0]?.id!==pearsonTabId) throw new Error('Select the Pearson tab before capturing.');
+      const url=tab.url||'';
+      if (!isHomeworkTab(tab)) throw new Error('Captures are limited to Pearson homework tabs.');
+      status.textContent='Capturing visible question area…';
+      const data=await chrome.tabs.captureVisibleTab(tab.windowId,{format:'png'});
+      const image=await new Promise((resolve,reject)=>{ const obj=new Image();obj.onload=()=>resolve(obj);obj.onerror=reject;obj.src=data; });
+      const x=Math.round(image.width*.155),y=Math.round(image.height*.185);
+      const w=Math.round(image.width*.83),h=Math.round(image.height*.76);
+      const scale=Math.min(1,1300/w);
+      const canvas=document.createElement('canvas');canvas.width=Math.max(1,Math.round(w*scale));canvas.height=Math.max(1,Math.round(h*scale));
+      canvas.getContext('2d').drawImage(image,x,y,w,h,0,0,canvas.width,canvas.height);
+      const crop=canvas.toDataURL('image/jpeg',.85);
+      await chrome.storage.session.set({[`screenshot:${pearsonTabId}`]:crop});
+      await chrome.storage.sync.set({includeVisual:true});
+      byId('includeVisual').checked=true;
+      await refreshCapture();
+    } catch(error) {status.textContent=`Capture failed: ${error.message}`;}
+  });
+  byId('clearCapture').addEventListener('click',async()=>{
+    if (pearsonTabId) await chrome.storage.session.remove(`screenshot:${pearsonTabId}`);
+    await chrome.storage.sync.set({includeVisual:false});byId('includeVisual').checked=false;
+    await refreshCapture();
+  });
+
   for (const action of ['start','stop','scan']) byId(action).addEventListener('click',()=>command(action));
   byId('version').textContent = 'v'+chrome.runtime.getManifest().version;
   locateTab().then(async () => {
     if (pearsonTabId) {
+      await refreshCapture();
       const result = await chrome.runtime.sendMessage({type:'PEARSON_CONTROL',action:'status',tabId:pearsonTabId});
       if (result?.ok) byId('runStatus').textContent = result.status;
     }
@@ -48,7 +89,7 @@
     const state = await chrome.storage.sync.get(DEFAULTS);
     const selected = document.querySelector(`input[name="model"][value="${state.model}"]`);
     if (selected) selected.checked = true;
-    for (const key of ['pauseBeforeSubmit', 'autoAdvance']) byId(key).checked = Boolean(state[key]);
+    for (const key of ['pauseBeforeSubmit', 'autoAdvance', 'includeVisual']) byId(key).checked = Boolean(state[key]);
     byId('repo').value = state.repo || '';
     await Promise.all(Object.entries(models).map(async ([model, pattern]) => {
       const tabs = await chrome.tabs.query({ url: pattern });
@@ -62,7 +103,7 @@
     saveTimeout = setTimeout(() => byId('saveStatus').textContent = 'Settings are saved with Chrome sync.', 2500);
   };
   document.querySelectorAll('input[name="model"]').forEach(el => el.addEventListener('change', () => save({ model: el.value })));
-  for (const key of ['pauseBeforeSubmit', 'autoAdvance']) byId(key).addEventListener('change', e => save({ [key]: e.target.checked }));
+  for (const key of ['pauseBeforeSubmit', 'autoAdvance', 'includeVisual']) byId(key).addEventListener('change', e => save({ [key]: e.target.checked }));
   byId('repo').addEventListener('change', e => save({ repo: e.target.value.trim() }));
   byId('checkUpdate').addEventListener('click', async () => {
     const name = byId('repo').value.trim();

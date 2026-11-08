@@ -30,6 +30,7 @@ with sync_playwright() as playwright:
       };
     }''')
     page.add_script_tag(content=(root / 'extension' / 'answer-utils.js').read_text())
+    page.add_script_tag(content=(root / 'extension' / 'math.js').read_text())
     page.add_script_tag(content=(root / 'extension' / 'pearson.js').read_text())
     page.wait_for_selector('#auto-pearson-widget')
     page.locator('#auto-pearson-widget').locator('button#start').click()

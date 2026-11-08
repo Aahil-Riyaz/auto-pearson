@@ -9,6 +9,7 @@ const MODELS = Object.freeze({
 const PEARSON_HOSTS = /(?:^|\.)(?:pearson\.com|pearsoncmg\.com|mathxl\.com|mylabmastering\.com)$/i;
 const activeRuns = new Map();
 const lastStatus = new Map();
+const revisions = new Map();
 const safePearsonUrl = url => {
   try { const u = new URL(url); return u.protocol === 'https:' && PEARSON_HOSTS.test(u.hostname); }
   catch { return false; }
@@ -16,20 +17,35 @@ const safePearsonUrl = url => {
 const shortError = error => error?.message || String(error);
 const isHomework = url => safePearsonUrl(url) && /homework/i.test(url);
 
+async function ensureFrameScripts(tabId, frameId, origin = 'pearson') {
+  const pingType = origin === 'assistant' ? 'PEARSON_AI_PING' : 'PEARSON_PROBE';
+  const message = {type:pingType};
+  const send = () => chrome.tabs.sendMessage(tabId, message, {frameId});
+  try { const response = await send(); if (response?.ok) return response; } catch {}
+  const files = origin === 'assistant' ? ['assistant.js'] : ['answer-utils.js','math.js','pearson.js'];
+  await chrome.scripting.executeScript({ target:{tabId,frameIds:[frameId]},files });
+  // Injection may finish before the frame's handlers are ready.
+  for (let attempt=0;attempt<4;attempt++) {
+    try { const response=await send(); if (response?.ok) return response; } catch {}
+    await new Promise(resolve=>setTimeout(resolve,130*(attempt+1)));
+  }
+  throw new Error(`Script unavailable in ${origin} frame ${frameId}. Refresh the page or check site access for this extension.`);
+}
 async function findFrames(tabId) {
   const frames = await chrome.webNavigation.getAllFrames({ tabId }) || [];
   const found = [];
+  const missing = [];
   for (const frame of frames) {
-    // about:blank/srcdoc can inherit a Pearson initiator; Chrome also controls
-    // matching using match_origin_as_fallback, never broad all-sites access.
     const approved = safePearsonUrl(frame.url) || /^about:(?:blank|srcdoc)$/i.test(frame.url);
-    if (!approved) continue;
+    const origin = (()=>{try{return new URL(frame.url).origin;}catch{return 'embedded frame';}})();
+    if (!approved) {missing.push({frameId:frame.frameId,origin,reason:'No Pearson host access for this origin'});continue;}
     try {
-      const result = await chrome.tabs.sendMessage(tabId, { type: 'PEARSON_PROBE' }, { frameId: frame.frameId });
-      if (result?.ok) found.push({ frameId: frame.frameId, origin: result.origin, ...result });
-    } catch { /* No script in this frame; do not use page-level JS or CDP to bypass it. */ }
+      const result = await ensureFrameScripts(tabId,frame.frameId);
+      if (result?.ok) found.push({frameId:frame.frameId,documentId:frame.documentId,origin, ...result});
+      else missing.push({frameId:frame.frameId,origin,reason:'Content script did not respond'});
+    } catch(error) { missing.push({frameId:frame.frameId,origin,reason:shortError(error)}); }
   }
-  return { found, all: frames.map(f => ({ frameId: f.frameId, origin: (() => {try {return new URL(f.url).origin;} catch {return 'embedded frame';}})() })) };
+  return { found, missing, all:frames.map(f=>({frameId:f.frameId,origin:(()=>{try{return new URL(f.url).origin;}catch{return 'embedded frame';}})()})) };
 }
 function rankFrame(f) {
   if (!f.question) return -1;
@@ -38,24 +54,19 @@ function rankFrame(f) {
 async function scanPearsonTab(tabId) {
   const tab = await chrome.tabs.get(tabId);
   if (!isHomework(tab.url || '')) return { ok: false, error: 'Open a Pearson MyLab homework tab first.' };
-  // User-initiated scan: reattach scripts to permitted frames on an already-open
-  // Pearson tab. Chrome itself enforces each frame's origin permission. Never
-  // inject scripts into other browser tabs or request unrestricted host access.
-  try {
-    await chrome.scripting.executeScript({target:{tabId,allFrames:true},files:['answer-utils.js','pearson.js']});
-  } catch (error) {
-    console.info('[Auto-Pearson] Some frames cannot be inspected with granted host permissions:', error.message);
-  }
-  const { found, all } = await findFrames(tabId);
+  const {found, missing, all} = await findFrames(tabId);
   const ranked = found.filter(f => f.question).sort((a,b) => rankFrame(b)-rankFrame(a));
   const selected = ranked[0] || null;
-  const probed = found.map(({ frameId, origin, question, controls, type }) => ({ frameId, origin, question, controls, type }));
-  const missing = all.filter(f => !found.some(p => p.frameId === f.frameId));
+  const probed = found.map(({ frameId, origin, question, controls, type, math, excerpt, deterministic }) => ({ frameId, origin, question, controls, type, math, excerpt, deterministic }));
   return { ok: true, selected, frames: probed, missing, total: all.length };
 }
-async function notify(tabId, status, isRunning = false) {
-  lastStatus.set(tabId, { status, isRunning });
-  try { await chrome.tabs.sendMessage(tabId, { type:'PEARSON_NOTIFY', status, isRunning }, { frameId:0 }); } catch {}
+async function notify(tabId, status, isRunning = false, count = 0) {
+  const revision=(revisions.get(tabId)||0)+1; revisions.set(tabId,revision);
+  lastStatus.set(tabId, { status, isRunning, count, revision });
+  try {
+    await ensureFrameScripts(tabId,0);
+    await chrome.tabs.sendMessage(tabId, { type:'PEARSON_NOTIFY', status, isRunning, count, revision }, { frameId:0 });
+  } catch(error) {console.debug('[Auto-Pearson] Toolbar not reachable:',shortError(error));}
 }
 async function controlTab(tabId, action) {
   const tab = await chrome.tabs.get(tabId);
@@ -71,7 +82,12 @@ async function controlTab(tabId, action) {
     return { ok:true, message:'Stopped.' };
   }
   if (action !== 'start') return {ok:false,error:'Unknown action'};
-  if (activeRuns.has(tabId)) return {ok:false,error:'Already running. Use Stop to end it.'};
+  if (activeRuns.has(tabId)) {
+    const run=activeRuns.get(tabId);
+    try {await chrome.tabs.sendMessage(tabId,{type:'PEARSON_PROBE'}, {frameId:run.frameId});
+      return {ok:false,error:'Already running. Use Stop to end it.'};}
+    catch {activeRuns.delete(tabId);}
+  }
   const scan = await scanPearsonTab(tabId);
   if (!scan.ok) return scan;
   if (!scan.selected) {
@@ -84,16 +100,25 @@ async function controlTab(tabId, action) {
   }
   const selected = scan.selected;
   try {
+    await ensureFrameScripts(tabId,selected.frameId);
+    activeRuns.set(tabId, {frameId:selected.frameId, documentId:selected.documentId});
     const result = await chrome.tabs.sendMessage(tabId, {type:'PEARSON_START_FRAME'}, {frameId:selected.frameId});
-    if (!result?.ok) return {ok:false,error:result?.error || 'Question frame rejected Start.'};
-    activeRuns.set(tabId, {frameId:selected.frameId});
+    if (!result?.ok) { activeRuns.delete(tabId);return {ok:false,error:result?.error || 'Question frame rejected Start.'}; }
     await notify(tabId, `Running inside Pearson frame ${selected.frameId}. ${selected.type.replaceAll('_',' ')} detected.`, true);
     return {ok:true,message:`Started in frame ${selected.frameId} (${selected.type.replaceAll('_',' ')}).`,frameId:selected.frameId};
   } catch (error) {
+    activeRuns.delete(tabId);
     return {ok:false,error:`Question frame could not be started: ${shortError(error)}`};
   }
 }
-chrome.tabs.onRemoved.addListener(tabId => { activeRuns.delete(tabId);lastStatus.delete(tabId); });
+chrome.tabs.onRemoved.addListener(tabId => { activeRuns.delete(tabId);lastStatus.delete(tabId);revisions.delete(tabId); });
+chrome.webNavigation.onCommitted.addListener(details => {
+  if (details.frameId === 0) { activeRuns.delete(details.tabId);lastStatus.delete(details.tabId);return; }
+  const run=activeRuns.get(details.tabId);
+  if (run && run.frameId===details.frameId && run.documentId && run.documentId!==details.documentId) {
+    activeRuns.delete(details.tabId);notify(details.tabId,'Question frame navigated. Click Start again to resume safely.',false).catch(()=>{});
+  }
+});
 
 const work = [];
 let active = null;
@@ -116,8 +141,16 @@ async function pump() {
     const aiTab = matches.find(tab => tab.id !== active.tabId);
     if (!aiTab) throw new Error(`Open ${provider.name} in another browser tab and sign in.`);
     active.aiTabId = aiTab.id;
+    await ensureFrameScripts(aiTab.id,0,'assistant');
+    const {includeVisual=false}=await chrome.storage.sync.get({includeVisual:false});
+    let screenshot=null;
+    if (includeVisual) {
+      const key=`screenshot:${active.tabId}`;
+      const saved=await chrome.storage.session.get(key);screenshot=saved[key]||null;
+      if (screenshot) await chrome.storage.session.remove(key); // one-time use; never silently attach to a later question
+    }
     const accepted = await chrome.tabs.sendMessage(aiTab.id, {
-      type: 'PEARSON_ASK', requestId: active.requestId, question: active.question
+      type: 'PEARSON_ASK', requestId: active.requestId, question: active.question, screenshot
     });
     if (!accepted?.ok) throw new Error(accepted?.error || `Unable to start ${provider.name}.`);
   } catch (error) {
@@ -137,18 +170,26 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     controlTab(tabId, message.action).then(respond).catch(e => respond({ok:false,error:shortError(e)}));
     return true;
   }
+  if (message.type === 'PEARSON_VISUAL_STATUS') {
+    if (!sender.tab?.id || !isHomework(sender.tab.url || '')) {respond({ok:false});return;}
+    chrome.storage.session.get(`screenshot:${sender.tab.id}`).then(items => respond({ok:true,available:!!items[`screenshot:${sender.tab.id}`]})).catch(()=>respond({ok:false}));
+    return true;
+  }
   if (message.type === 'PEARSON_PAGE_ACTION') {
     if (!sender.tab?.id || !isHomework(sender.tab.url || '') || !['check','next','status'].includes(message.action)) {
       respond({ok:false,error:'Not an approved Pearson homework action.'});return;
     }
-    chrome.tabs.sendMessage(sender.tab.id, {type:'PEARSON_PAGE_CONTROL',action:message.action}, {frameId:0})
+    ensureFrameScripts(sender.tab.id,0).then(()=>chrome.tabs.sendMessage(sender.tab.id, {type:'PEARSON_PAGE_CONTROL',action:message.action}, {frameId:0}))
       .then(respond).catch(e => respond({ok:false,error:shortError(e)}));
     return true;
   }
   if (message.type === 'PEARSON_PROGRESS') {
-    if (sender.tab && safePearsonUrl(sender.tab.url || '')) {
-      if (!message.isRunning) activeRuns.delete(sender.tab.id);
-      notify(sender.tab.id, String(message.status || '').slice(0,300), Boolean(message.isRunning));
+    if (sender.tab && isHomework(sender.tab.url || '')) {
+      const run=activeRuns.get(sender.tab.id);
+      if (run && run.frameId === sender.frameId) {
+        if (!message.isRunning) activeRuns.delete(sender.tab.id);
+        notify(sender.tab.id, String(message.status || '').slice(0,300), Boolean(message.isRunning), Number(message.count)||0);
+      }
     }
     respond({ok:true});return;
   }
@@ -162,6 +203,8 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     if (!message.requestId || message.question.length > 12000) {
       respond({ ok: false, error: 'Invalid question data' }); return;
     }
+    const run=activeRuns.get(sender.tab.id);
+    if (!run || run.frameId!==sender.frameId) {respond({ok:false,error:'Start the selected question frame first.'});return;}
     work.push({ tabId: sender.tab.id, frameId: sender.frameId, requestId: message.requestId, question: message.question });
     respond({ ok: true });
     pump();
@@ -183,7 +226,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     return;
   }
   if (message.type === 'PEARSON_CANCEL') {
-    if (!sender.tab?.id) return;
+    if (!sender.tab?.id) {respond({ok:false});return;}
     if (active && active.tabId === sender.tab.id && active.frameId === sender.frameId) {
       active = null;
       queueMicrotask(pump);

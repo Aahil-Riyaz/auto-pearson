@@ -5,10 +5,12 @@
 
   const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
   const { parseAnswer, choiceIndex, normalize } = PearsonAnswer;
+  const { extractFromClone, confidenceZAnswer } = PearsonMath;
   const DEFAULTS = { model: 'chatgpt', pauseBeforeSubmit: true, autoAdvance: false, };
   const state = { running: false, generation: 0, count: 0, errors: 0, currentRequest: null, resolveRequest: null };
   let options = { ...DEFAULTS };
   let host, statusEl, startBtn, countEl;
+  let lastRevision = 0;
 
   const visible = e => !!e && e.getClientRects().length > 0 && getComputedStyle(e).visibility !== 'hidden';
   const isRadio = e => e.type === 'radio' || e.getAttribute('role') === 'radio';
@@ -58,7 +60,9 @@
   function describeInput(el, index) {
     const label = (el.closest('label') || (el.id && [...document.querySelectorAll('label[for]')].find(l => l.htmlFor === el.id)));
     const adjacent = label || el.parentElement;
-    let content = textOf(adjacent).slice(0, 240);
+    const temp = adjacent?.cloneNode(true);
+    if (temp) extractFromClone(temp);
+    let content = textOf(temp).slice(0, 240);
     if (!content) content = el.getAttribute('aria-label') || el.placeholder || `Option ${index + 1}`;
     return content;
   }
@@ -82,12 +86,14 @@
     let root = parent;
     for (let n = 0; root && n < 5 && textOf(root).length < 40; n++) root = root.parentElement;
     if (!root || textOf(root).length > 5000) return null;
-    const labels = options.map(textOf);
-    const question = textOf(root).slice(0, 5000);
+    const labels = options.map(option => { const copy = option.cloneNode(true); extractFromClone(copy); return textOf(copy); });
+    const rootCopy = root.cloneNode(true);
+    const mathInfo = extractFromClone(rootCopy);
+    const question = textOf(rootCopy).slice(0, 5000);
     if (!question || labels.some(l => !l)) return null;
     const type = options.some(e => e.getAttribute('role') === 'checkbox') ? 'multiple_select' : 'multiple_choice';
     const signature = normalize(question.slice(0,1200)+'|'+labels.join('|')).slice(0,1600);
-    return { root, fields: options, type, question, labels, selectOptions:[], signature };
+    return { root, fields: options, type, question, labels, selectOptions:[], signature, mathInfo, deterministic:confidenceZAnswer(question, labels) };
   }
 
   function extractQuestion() {
@@ -104,12 +110,13 @@
     const activeFields = radio.length ? radio : checkboxes.length ? checkboxes : selects.length ? selects : texts;
     const clone = root.cloneNode(true);
     clone.querySelectorAll('button, nav, script, style, [role="navigation"], input, textarea, select, [contenteditable="true"]').forEach(e => e.remove());
+    const mathInfo = extractFromClone(clone);
     const question = textOf(clone).slice(0, 6000);
     const fieldLabels = activeFields.map(describeInput);
     const selectOptions = selects.map(select => [...select.options].filter(o => o.value && !/^(select|choose)/i.test(o.textContent.trim())).map(o => o.textContent.trim()));
     const signature = normalize(question.slice(0, 1200) + '|' + fieldLabels.join('|')).slice(0, 1600);
     if (!question || !signature || !activeFields.length) return null;
-    return { root, fields: activeFields, type, question, labels: fieldLabels, selectOptions, signature };
+    return { root, fields: activeFields, type, question, labels: fieldLabels, selectOptions, signature, mathInfo, deterministic:confidenceZAnswer(question, fieldLabels) }; 
   }
 
   function promptFor(q) {
@@ -118,7 +125,9 @@
       question: q.question,
       options: ['multiple_choice', 'multiple_select'].includes(q.type) ? q.labels.map((label, i) => `${i + 1}. ${label}`) : [],
       dropdownOptions: q.selectOptions,
-      fieldCount: q.fields.length
+      fieldCount: q.fields.length,
+      detectedMath: q.mathInfo?.formulas || 0,
+      mathUnrecognized: q.mathInfo?.unreadable || 0
     };
     return `Solve the following practice/homework problem carefully. Work out the reasoning but provide a concise final answer. Do not invent missing information.\n\n${JSON.stringify(payload)}\n\nRespond with exactly one JSON object of the form {"answers":["exact answer or exact option label"],"explanation":"short justification"}. For multiple select include every selected option. For multiple blanks and dropdowns, return one answer PER FIELD in order. If uncertain, use {"answers":[],"explanation":"why uncertain"}. Do not include markdown fences.`;
   }
@@ -185,7 +194,7 @@
     if (statusEl) statusEl.textContent = message;
     if (countEl) countEl.textContent = `${state.count} filled`;
     if (startBtn) startBtn.textContent = state.running ? 'Stop' : 'Start';
-    if (state.running) chrome.runtime.sendMessage({type:'PEARSON_PROGRESS', status:message, isRunning:true}).catch(()=>{});
+    if (state.running) chrome.runtime.sendMessage({type:'PEARSON_PROGRESS', status:message, isRunning:true, count:state.count}).catch(()=>{});
   }
   function stop(message = 'Stopped') {
     state.running = false;
@@ -196,7 +205,7 @@
     }
     chrome.runtime.sendMessage({ type: 'PEARSON_CANCEL' }).catch(() => {});
     updateUI(message);
-    chrome.runtime.sendMessage({type:'PEARSON_PROGRESS',status:message,isRunning:false}).catch(()=>{});
+    chrome.runtime.sendMessage({type:'PEARSON_PROGRESS',status:message,isRunning:false,count:state.count}).catch(()=>{});
   }
   const stillRunning = generation => state.running && generation === state.generation;
   async function waitFor(predicate, generation, timeout = Infinity, interval = 350) {
@@ -282,15 +291,39 @@
         continue;
       }
       last = q.signature;
-      updateUI(`Asking ${options.model} about a ${q.type.replace(/_/g, ' ')} question…`);
-      const reply = await askAI(promptFor(q), generation);
-      if (!stillRunning(generation)) return;
-      if (reply.error) { stop(reply.error); return; }
-      const answer = parseAnswer(reply.answer);
+      let answer;
+      if (q.deterministic && q.type === 'multiple_choice') {
+        answer = { answers: [q.labels[q.deterministic.index]], explanation: `Exact two-sided z critical value ${q.deterministic.critical} yields ${q.deterministic.level}% confidence.`, structured: true };
+        updateUI(`Verified known z critical value: ${q.deterministic.level}% confidence.`);
+      } else {
+        if (q.mathInfo?.unreadable) {
+          const visual=await chrome.runtime.sendMessage({type:'PEARSON_VISUAL_STATUS'}).catch(()=>({ok:false}));
+          if (!options.includeVisual || !visual?.available) {
+            stop(`Question contains ${q.mathInfo.unreadable} unreadable image/formula(s). Use Capture visible question in Settings, enable the attachment, and Start again.`);
+            return;
+          }
+        }
+        updateUI(`Asking ${options.model} about a ${q.type.replace(/_/g, ' ')} question…`);
+        const reply = await askAI(promptFor(q), generation);
+        if (!stillRunning(generation)) return;
+        if (reply.error) { stop(reply.error); return; }
+        answer = parseAnswer(reply.answer);
+        if (!answer.structured || !answer.answers.length) {
+          stop('AI response was not valid structured JSON with a usable answer. No option was selected.');return;
+        }
+      }
       const current = extractQuestion();
       if (!current || current.signature !== q.signature) {
         updateUI('Question changed while AI was answering; retrying current question.');
         last = ''; continue;
+      }
+      if (current.type === 'multiple_choice' && /confidence\s+level|probability/i.test(current.question)) {
+        const picked = choiceIndex(answer.answers[0],current.labels);
+        const candidate = current.labels[picked] || '';
+        const percent = candidate.match(/\b(\d+(?:\.\d+)?)\s*%/);
+        if (percent && Number(percent[1]) > 100) {
+          stop(`Rejected impossible probability/confidence answer: ${candidate}. Please review manually.`);return;
+        }
       }
       const outcome = apply(current, answer.answers);
       if (!outcome.ok) {
@@ -339,7 +372,7 @@
     host.style.cssText = 'position:fixed;right:18px;bottom:18px;z-index:2147483647';
     const shadow = host.attachShadow({ mode: 'open' });
     shadow.innerHTML = `<style>
-      *{box-sizing:border-box} .card{width:270px;background:#132036;color:#edf3ff;border:1px solid #334866;border-radius:15px;padding:14px;box-shadow:0 9px 30px #0005;font:13px/1.45 system-ui,Arial,sans-serif}
+      *{box-sizing:border-box} .card{width:290px;background:#132036;color:#edf3ff;border:1px solid #334866;border-radius:15px;padding:14px;box-shadow:0 9px 30px #0005;font:13px/1.45 system-ui,Arial,sans-serif}
       .top{display:flex;justify-content:space-between;align-items:center;gap:8px}.name{font-weight:750;font-size:15px}.sub{font-size:11px;color:#a8b7d5}
       .buttons{display:flex;gap:7px;margin:10px 0}.buttons button{cursor:pointer;border:0;border-radius:8px;font-weight:700;padding:7px 10px}.start{background:#7dc7ff;color:#0b1930;flex:1}.settings{background:#30425d;color:white}
       .status{font-size:12px;color:#d8e8fb;min-height:32px;overflow-wrap:anywhere}.tiny{margin-top:8px;color:#a8b7d5;font-size:11px}
@@ -377,7 +410,7 @@
     }
     if (msg.type === 'PEARSON_PROBE') {
       const q = isAssessment() ? null : extractQuestion();
-      respond({ ok: true, question:Boolean(q), type:q?.type || 'unknown', controls:q?.fields?.length || problemControls().length, origin:location.origin });
+      respond({ ok: true, question:Boolean(q), type:q?.type || 'unknown', controls:q?.fields?.length || problemControls().length, origin:location.origin, math:q?.mathInfo||{formulas:0,unreadable:0}, excerpt:q?.question?.slice(0,900)||'', deterministic:q?.deterministic?.level || null });
       return;
     }
     if (msg.type === 'PEARSON_START_FRAME') {
@@ -386,6 +419,9 @@
     }
     if (msg.type === 'PEARSON_STOP_FRAME') { if (state.running) stop(); respond({ok:true}); return; }
     if (msg.type === 'PEARSON_NOTIFY' && window === window.top) {
+      if (msg.revision && msg.revision < lastRevision) {respond({ok:true,stale:true});return;}
+      lastRevision=msg.revision || lastRevision;
+      if (countEl) countEl.textContent=`${Number(msg.count)||0} filled`;
       if (statusEl) statusEl.textContent = msg.status || 'Ready.';
       if (startBtn) startBtn.textContent = msg.isRunning ? 'Stop' : 'Start';
       state.running = Boolean(msg.isRunning);

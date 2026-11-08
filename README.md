@@ -1,66 +1,56 @@
-# Auto-Pearson (experimental, v0.2.0)
+# Auto-Pearson v0.3.0 — experimental Chrome extension
 
-**A Chrome Manifest V3 extension for Pearson MyLab homework, modeled after the workflow of [Auto-McGraw](https://github.com/GooglyBlox/auto-mcgraw).** This is a new implementation, **not an official Pearson product**, and has **not been validated on a live Pearson assignment**.
+A Chrome Manifest V3 helper for supported **Pearson MyLab homework** screens, based on the workflow of Auto-McGraw. This is an independent prototype and not affiliated with Pearson.
 
-## What works by design
-
-- Chrome popup to choose an existing, signed-in ChatGPT, Gemini, or DeepSeek tab. No API key required.
-- A floating Start / Stop / Settings toolbar appears on Pearson homework pages even if no answer fields are recognized, showing a diagnostic message instead of silently hiding.
-- Detects typical HTML radio buttons, checkboxes, text fields, and dropdowns.
-- Sends the current question with visible options to the selected AI tab and parses a structured reply.
-- Fills a matching answer when possible. Otherwise pauses with a manual-answer explanation.
-- Optionally clicks Check Answer / Final Check (default **off**) and Continue / Next (default **off**).
-- Handles subsequent questions/parts when the visible question changes, without deliberately retrying a graded incorrect response.
-- Remembers settings using `chrome.storage.sync`, checks whether a model tab is open, and offers an optional GitHub release checker once you publish a repo.
-- Prevents the run from starting on pages detected as quizzes/exams.
-
-## Not implemented or not guaranteed
-
-Pearson has several distinct MyLab and Mastering assignment players, including iframe-based and custom math editors. The extension has **not been tested against their live HTML** and can fail to detect the problem, apply a response, or navigate correctly. Native math palettes, equation editors, draggable matching, diagrams, and inaccessible cross-origin iframes may require a dedicated adapter. No automated correctness guarantee is possible. ChatGPT/Gemini/DeepSeek UI changes can break their bridges.
-
-Auto-McGraw's random SmartBook confidence and duplicate-tab double-credit features do not map cleanly to Pearson's grading interface; their settings are shown as unavailable rather than pretending to work. This tool does not manipulate grades or exploit scoring. It also does not bypass authentication, proctoring, or usage restrictions.
+> **Compatibility status:** Tested with mock pages and a rendered MathML fixture. It has **not** been tested in an authenticated, live Pearson MyLab account. Do not assume it will complete every assignment correctly. AI responses and third-party website layouts change; review answers before checking.
 
 ## Installation
 
-1. Unzip the project and open `chrome://extensions` in Google Chrome.
-2. Enable **Developer mode**.
-3. Click **Load unpacked** and select the `extension` folder **inside** this project.
-4. Click the Auto-Pearson toolbar extension icon. Choose an AI provider and open a signed-in tab for it.
-5. Open a **homework** assignment in Pearson MyLab. The Auto-Pearson Start panel should appear at the lower right on a top-level Pearson homework URL, even if question detection fails. A question in an embedded Pearson frame may also display its own panel.
-6. Start with **Pause before submitting ON**. Click **Start**, review the filled answer, then click Pearson's Check Answer manually.
-7. Only after testing your exact course player, turn off pause-before-submitting if allowed by your academic integrity rules. The extension may still need manual intervention.
+1. Remove earlier Auto-Pearson extension versions from `chrome://extensions` (avoids conflicts between two unpacked versions).
+2. Extract this ZIP. In Chrome, open `chrome://extensions`, enable **Developer mode**, click **Load unpacked**, and select the **extension** directory containing `manifest.json`.
+3. Refresh the open Pearson homework tab **after** installation.
+4. Open Gemini, ChatGPT, or DeepSeek in a separate tab and sign in there yourself (the extension does not ask for or retain your password).
+5. Open the Auto-Pearson popup. Select the assistant, and choose **Scan frames**. The diagnostic area will show the frame, option count, and a short extract of the question.
+6. Keep **Pause before submitting** enabled while validating a new question type. Click **Start** in the popup or the floating panel on Pearson. **Stop** ends the run.
 
-## Data and privacy
+## What changed from 0.2.0
 
-The extension reads the visible question container on a Pearson page and sends its question text and options to the AI tab you selected. Nothing runs automatically on page load. It does not store Pearson credentials or use a remote backend. Do not use the extension in pages displaying private information outside the problem statement. Keep Chrome permissions scoped to the stated education and AI domains.
+- Recover from `Receiving end does not exist` by pinging and reinjecting the content script into the **specific permitted Pearson frame**, then retrying.
+- Communicate a single tab-level run status and filled count from the question frame to the popup and floating toolbar, preventing divergent status displays.
+- Preserve MathML, LaTeX annotations, and accessible SVG/image captions when extracting a question. Unreadable equations/images are flagged rather than silently removed.
+- A deterministic check for common two-sided **z** critical values. E.g. \(\bar{x}\pm1.645\sigma/\sqrt n\) corresponds to **90%** confidence, not 165%. This is narrowly scoped and not a general math solver.
+- Reject unstructured AI output and impossible probability/confidence answers over 100%.
+- Wider popup with Start, Stop, Scan Frames, question excerpt, and diagnostics.
+- Optional **Capture visible question**: from the popup while the Pearson tab is selected, capture the currently visible content, crop the account/header region, and preview the image. The crop is kept only in `chrome.storage.session`. It is sent to the chosen AI tab **only** when attachment mode is selected, and removed after one use. Screenshot uploads depend on the current AI site's file-upload controls and may fail cleanly.
+- The extension intentionally does **not** request `cookies`, unrestricted `<all_urls>`, or `debugger` privileges. It needs permission to access the Pearson and selected AI domains, not passwords or unrestricted access to your browser.
 
-## Development
+## When a question is not supported
 
-- `extension/pearson.js`: Pearson form discovery, answer applying, UI, and the run loop.
-- `extension/assistant.js`: assistant-tab bridge. Site UI selectors can change without notice.
-- `extension/background.js`: service worker for routing requests and replies by originating tab/frame.
-- `extension/answer-utils.js`: answer parsing and choice selection, with dependency-free tests.
-- `extension/popup.*`: options and provider status.
-- `tests/answer-utils.test.js`: run with `node --test tests/answer-utils.test.js`.
+- If Scan frames says a frame is unreachable, verify **Site access** in `chrome://extensions` → Auto-Pearson → Details and refresh the homework page. A cross-origin frame that Chrome doesn't grant access to cannot be read by the content script.
+- If the question contains unrecognizable images/formulas, use **Capture visible question** and inspect the crop. The helper will not blindly select an option from incomplete mathematical text.
+- If the AI response is not structured JSON, the extension pauses rather than guessing.
+- When Pearson re-creates or navigates the question iframe, Stop and Start again if necessary. Automatic resumption across every possible Pearson page transition has not been validated.
+- The UI automations depend on Pearson and the AI provider DOM. Changes in their pages can require a new adapter.
+- Matching, custom symbolic math editors, and drag-and-drop controls are not comprehensively supported. Double-credit and random-confidence from the McGraw project are not native Pearson features.
 
-To add support for a specific player, capture a **sanitized DOM snippet** of a question and its input controls (never passwords, tokens, cookies, or student details), then update the container/control selectors and test against that markup.
+## Privacy and limits
 
-## Credits
+The extension reads visible problem text and controls, never your password/cookies. The image feature crops the screenshot to the central problem pane to omit the usual account header, but *inspect the preview before enabling attachment* because other personal information may still appear in the question itself. The image is uploaded through your chosen signed-in AI tab; its privacy terms then apply. The screenshot is not saved in Chrome Sync or transmitted to any developer server.
 
-Workflow inspired by [GooglyBlox/auto-mcgraw](https://github.com/GooglyBlox/auto-mcgraw), MIT licensed. This implementation is written separately and does not include the original project's code or assets. Pearson and its product names are trademarks of their respective owners.
+Only activate this on assignments where using such assistance is permitted by the course's academic-integrity rules.
 
-## v0.1.1 toolbar fix
+## Development / tests
 
-If the Start button was previously missing on `mylab.pearson.com/Student/PlayerHomework.aspx`, this version displays the floating control in the lower right without requiring successful question detection. Replacing the extension and **refreshing the Pearson homework tab** is required. If Start reports that answer controls were not detected, the current Pearson player still needs an adapter; the fix does not falsely claim it can answer unsupported widgets.
+Requires Node 22+ and Python with Playwright + a local Chromium binary.
 
-## v0.2.0: frame-aware controls and wider popup
+```
+node --test tests/*.test.js
+python tests/math-browser-smoke.py
+python tests/browser-smoke.py
+python tests/toolbar-regression.py
+python tests/popup-smoke.py
+```
 
-- Settings popup is 490px wide and includes **Start**, **Stop**, and **Scan frames** at the top. The Chrome action popup may scroll because Chrome caps popup height at 600px.
-- Start searches **only your open Pearson homework tab** and queries extension-permitted embedded frames to find a question. The detected frame handles AI prompting and input selection, rather than assuming the top-level page contains the exercise.
-- Scan frames attempts to re-inject the local extension scripts into frames Chrome permits on that Pearson tab, then lists frame origins, counts of controls, and detection status; it does not send question contents anywhere. Use it to identify which third-party question frame needs a dedicated adapter.
-- Handles about:blank/srcdoc frames created by permitted Pearson pages via Chrome's origin matching (when Chrome can associate the creator with Pearson). It does not ask to debug Chrome, disable protections, extract browser session data, or request <all_urls> permission.
-- **Experimental:** a custom Pearson question renderer may still require a new specific adapter. This release does not guarantee compatibility with the screenshot's particular question.
+These validate the parser, the receiving-end recovery mock, the visible question scanner, a real MathML DOM fixture, the toolbar and popup. They **do not** constitute end-to-end validation on the real Pearson or AI websites.
 
-### Cross-frame submission safeguards
-
-On some Pearson page layouts, the answer inputs are within a question frame while **Check Answer** belongs to the outer player. v0.2.0 includes a restricted frame-to-parent click path for that button (only when automatic submission is enabled). The default remains **Pause before submitting ON**. To avoid accidentally skipping a question, automatic Next is limited to a visible text-labelled Next/Continue control, not a header arrow with an accessible "Next" label. After manual checking, a new question or part must actually appear before the next AI request.
+Reference inspiration: https://github.com/GooglyBlox/auto-mcgraw (MIT licensed; implementation here is independently written).
