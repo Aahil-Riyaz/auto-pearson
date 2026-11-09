@@ -52,6 +52,10 @@ Run `node --test tests/*.test.js` from the repository root. For the Chrome simul
 
 </details>
 
+## Development history
+
+[Browse all eight original builds and their diffs](HISTORY.md), from the first homework toolbar to the multi-part navigation fixes in v0.6.1.
+
 ## Support Auto-Pearson
 
 If Auto-Pearson helped you through a MyLab assignment, **star the repository** using the ★ Star button at the top of this page. If you hit a layout it can’t handle, a [bug report](https://github.com/Aahil-Riyaz/auto-pearson/issues/new) helps me reproduce it.
